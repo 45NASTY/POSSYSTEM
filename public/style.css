@@ -1,0 +1,50 @@
+body {
+  position: relative;
+  background: linear-gradient(135deg, #f8fafc 0%, #e0e7ff 100%), url('/possystem/img/unnamed.jpg');
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-blend-mode: multiply;
+  min-height: 100vh;
+}
+body::before {
+  content: "";
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: -1;
+  background: linear-gradient(135deg, #f8fafc 0%, #e0e7ff 100%), url('/possystem/img/unnamed.jpg');
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-blend-mode: multiply;
+  filter: blur(8px) brightness(0.9);
+}
+.navbar {
+  background: linear-gradient(90deg, #6366f1 0%, #60a5fa 100%);
+  box-shadow: 0 4px 16px rgba(60,60,120,0.15);
+  border-radius: 0 0 18px 18px;
+}
+.navbar-brand {
+  font-weight: bold;
+  font-size: 1.5rem;
+  color: #fff !important;
+  letter-spacing: 2px;
+}
+.navbar-nav .nav-link {
+  color: #f3f4f6 !important;
+  font-weight: 500;
+  margin-right: 1rem;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+.navbar-nav .nav-link:hover {
+  background: #818cf8;
+  color: #fff !important;
+}
+.container {
+  background: rgba(255,255,255,0.85);
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(60,60,120,0.08);
+  padding: 2rem;
+  margin-top: 2rem;
+}
