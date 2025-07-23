@@ -98,6 +98,7 @@ $customers = $stmt->fetchAll();
                   <th>Pending Credit</th>
                   <th>Update Credit Limit</th>
                   <th>Update Pending Credit</th>
+                  <th>Print Credit Bill</th>
               </tr>
           </thead>
           <tbody>
@@ -121,6 +122,19 @@ $customers = $stmt->fetchAll();
                           <input type='number' step='0.01' name='pending_credit' value='<?php echo $cust['pending_credit']; ?>' class='form-control form-control-lg me-2 mb-2' required>
                           <button type='submit' name='update_pending_credit' class='btn btn-info btn-lg'>Update</button>
                       </form>
+                  </td>
+                  <td>
+                      <?php
+                      // Find latest credit bill for this customer
+                      $creditBillStmt = $pdo->prepare("SELECT id FROM bills WHERE customer_id = ? AND payment_type = 'credit' ORDER BY closed_at DESC LIMIT 1");
+                      $creditBillStmt->execute([$cust['id']]);
+                      $creditBillId = $creditBillStmt->fetchColumn();
+                      if ($creditBillId) {
+                          echo '<a href="/possystem/public/printbill.php?bill_id=' . $creditBillId . '&autoprint=1" class="btn btn-secondary btn-lg" target="_blank">Print Bill</a>';
+                      } else {
+                          echo '<button class="btn btn-secondary btn-lg" disabled>No Bill</button>';
+                      }
+                      ?>
                   </td>
               </tr>
           <?php endforeach; ?>
