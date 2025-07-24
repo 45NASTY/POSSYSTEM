@@ -39,8 +39,8 @@ $inventory_days = $pdo->query("SELECT purchased_at as day, SUM(total_price) as i
 $inventory_days = array_reverse($inventory_days);
 
 // Daily sales for last 14 days for bar graph (by payment type)
-$sales_days_cash = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='cash' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
-$sales_days_cash = array_reverse($sales_days_cash);
+$sales_days_offline = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND (payment_type!='online' AND payment_type!='credit') GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+$sales_days_offline = array_reverse($sales_days_offline);
 $sales_days_online = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='online' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
 $sales_days_online = array_reverse($sales_days_online);
 $sales_days_credit = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='credit' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
@@ -61,9 +61,9 @@ $stmt->execute();
 $online_inventory = $stmt->fetch()['online_inventory'];
 
 // Daily Sales breakdown by payment type
-$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as cash_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'cash'");
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as offline_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type!='online' AND payment_type!='credit'");
 $stmt->execute();
-$cash_sales = $stmt->fetch()['cash_sales'];
+$offline_sales = $stmt->fetch()['offline_sales'];
 $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as online_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'online'");
 $stmt->execute();
 $online_sales = $stmt->fetch()['online_sales'];
@@ -103,7 +103,12 @@ $credit_sales = $stmt->fetch()['credit_sales'];
 <body>
 <nav class="navbar navbar-expand-lg mb-4">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/possystem/public/dashboard.php">Cafe POS</a>
+    <?php
+    require_once __DIR__ . '/../config.php';
+    $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
+    $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
+    ?>
+    <a class="navbar-brand" href="/possystem/public/dashboard.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
@@ -125,7 +130,7 @@ $credit_sales = $stmt->fetch()['credit_sales'];
             <div class="card dashboard-card" style="background:#22c55e;color:#fff;">
                 <div class="card-header">Today's Sales (NPR)</div>
                 <div class="card-body">
-                    <div style="font-size:1.1rem;">Cash: <strong><?php echo number_format($cash_sales,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Offline: <strong><?php echo number_format($offline_sales,2); ?></strong></div>
                     <div style="font-size:1.1rem;">Online: <strong><?php echo number_format($online_sales,2); ?></strong></div>
                     <div style="font-size:1.1rem;">Credit: <strong><?php echo number_format($credit_sales,2); ?></strong></div>
                     <div style="font-size:1.2rem; margin-top:8px;">Total: <strong><?php echo number_format($daily_sales,2); ?></strong></div>
@@ -171,7 +176,7 @@ $credit_sales = $stmt->fetch()['credit_sales'];
 <script>
 const salesLabels = <?php echo json_encode(array_map(function($d){return $d['day'];}, $sales_days)); ?>;
 const salesData = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days)); ?>;
-const salesDataCash = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_cash)); ?>;
+const salesDataOffline = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_offline)); ?>;
 const salesDataOnline = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_online)); ?>;
 const salesDataCredit = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_credit)); ?>;
 const ctx = document.getElementById('salesBarChart').getContext('2d');
@@ -181,8 +186,8 @@ new Chart(ctx, {
         labels: salesLabels,
         datasets: [
             {
-                label: 'Sales (NPR) - Cash',
-                data: salesDataCash,
+                label: 'Sales (NPR) - Offline',
+                data: salesDataOffline,
                 backgroundColor: '#22c55e',
             },
             {
