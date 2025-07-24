@@ -16,7 +16,7 @@ $booked_tables = $pdo->query("SELECT * FROM tables WHERE status='occupied' ORDER
 $menu_items = $pdo->query("SELECT mi.*, mc.name as category FROM menu_items mi JOIN menu_categories mc ON mi.category_id = mc.id ORDER BY mc.name, mi.name")->fetchAll();
 $customers = $pdo->query("SELECT * FROM customers ORDER BY name")->fetchAll();
 
-// Handle add item, save bill, and checkout
+// Handle add item, save bill, checkout, and switch table
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Remove entire bill and unbook table
     if (isset($_POST['remove_bill'])) {
@@ -146,6 +146,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: billing.php');
         exit;
     }
+    // Switch table logic
+    if (isset($_POST['switch_table']) && isset($_POST['bill_id']) && isset($_POST['new_table_id'])) {
+        $bill_id = $_POST['bill_id'];
+        $new_table_id = $_POST['new_table_id'];
+        // Get current table id
+        $stmt = $pdo->prepare("SELECT table_id FROM bills WHERE id=?");
+        $stmt->execute([$bill_id]);
+        $old_table_id = $stmt->fetchColumn();
+        // Update bill's table_id
+        $pdo->prepare("UPDATE bills SET table_id=? WHERE id=?")->execute([$new_table_id, $bill_id]);
+        // Set old table to available
+        $pdo->prepare("UPDATE tables SET status='available' WHERE id=?")->execute([$old_table_id]);
+        // Set new table to occupied
+        $pdo->prepare("UPDATE tables SET status='occupied' WHERE id=?")->execute([$new_table_id]);
+        header('Location: billing.php');
+        exit;
+    }
     header('Location: billing.php');
     exit;
 }
@@ -216,9 +233,13 @@ foreach ($booked_tables as $table) {
   </div>
 </div>
 <script>
+
 const menuItems = <?php echo json_encode($menu_items); ?>;
 const customers = <?php echo json_encode($customers); ?>;
 const bills = <?php echo json_encode($bills); ?>;
+const bookedTables = <?php echo json_encode($booked_tables); ?>;
+// Get available tables for switch
+const availableTables = <?php echo json_encode($pdo->query("SELECT * FROM tables WHERE status='available' ORDER BY table_number")->fetchAll()); ?>;
 // Pass used credit for each customer
 const customerCredits = {};
 <?php foreach ($customers as $c): ?>
@@ -259,6 +280,7 @@ function renderBillingModal(tableId, tableNumber) {
         }
         <?php endforeach; ?>
         html += `</ul><strong>Total: NPR ${parseFloat(bill.total_amount||0).toFixed(2)}</strong>`;
+
         // Remove Bill button
         html += `<form method='post' class='mt-2'><input type='hidden' name='bill_id' value='${bill.id}'><button type='submit' name='remove_bill' class='btn btn-outline-danger btn-sm'>Remove Bill & Unbook Table</button></form>`;
 
@@ -289,6 +311,7 @@ function renderBillingModal(tableId, tableNumber) {
         html += `<button type='button' class='btn btn-secondary btn-sm mb-2' id='add-split-btn'>Add Split</button>`;
         html += `<div id='split-error' class='text-danger mb-2'></div>`;
         html += `<button type='submit' name='split_checkout' class='btn btn-danger'>Checkout (Split)</button></form>`;
+
     }
     document.getElementById('billing-modal-body').innerHTML = html;
     // Split payment UI logic

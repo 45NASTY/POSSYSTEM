@@ -39,7 +39,9 @@ $inventory_days = $pdo->query("SELECT purchased_at as day, SUM(total_price) as i
 $inventory_days = array_reverse($inventory_days);
 
 // Daily sales for last 14 days for bar graph (by payment type)
-$sales_days_offline = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='offline' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+
+$sales_days_offline = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND (payment_type!='online' AND payment_type!='credit') GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+
 $sales_days_offline = array_reverse($sales_days_offline);
 $sales_days_online = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='online' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
 $sales_days_online = array_reverse($sales_days_online);
@@ -62,12 +64,14 @@ $online_inventory = $stmt->fetch()['online_inventory'];
 
 // Daily Sales breakdown by payment type
 
-// Calculate today's sales by payment type, including split bills
-$offline_sales = 0;
-$online_sales = 0;
-$credit_sales = 0;
-// 1. Get all closed bills for today
-$stmt = $pdo->prepare("SELECT id, payment_type, total_amount FROM bills WHERE DATE(closed_at) = CURDATE() AND status = 'closed'");
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as offline_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type!='online' AND payment_type!='credit'");
+$stmt->execute();
+$offline_sales = $stmt->fetch()['offline_sales'];
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as online_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'online'");
+$stmt->execute();
+$online_sales = $stmt->fetch()['online_sales'];
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as credit_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'credit'");
+
 $stmt->execute();
 $bills_today = $stmt->fetchAll();
 foreach ($bills_today as $bill) {
@@ -119,7 +123,12 @@ foreach ($bills_today as $bill) {
 <body>
 <nav class="navbar navbar-expand-lg mb-4">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/possystem/public/dashboard.php">Cafe POS</a>
+    <?php
+    require_once __DIR__ . '/../config.php';
+    $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
+    $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
+    ?>
+    <a class="navbar-brand" href="/possystem/public/dashboard.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
