@@ -58,7 +58,12 @@ $customers = $stmt->fetchAll();
 <body>
 <nav class="navbar navbar-expand-lg mb-4">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/possystem/public/dashboard.php">Cafe POS</a>
+    <?php
+    require_once __DIR__ . '/../config.php';
+    $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
+    $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
+    ?>
+    <a class="navbar-brand" href="/possystem/public/dashboard.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="#navbarNav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
@@ -98,6 +103,7 @@ $customers = $stmt->fetchAll();
                   <th>Pending Credit</th>
                   <th>Update Credit Limit</th>
                   <th>Update Pending Credit</th>
+                  <th>Print Credit Bill</th>
               </tr>
           </thead>
           <tbody>
@@ -121,6 +127,19 @@ $customers = $stmt->fetchAll();
                           <input type='number' step='0.01' name='pending_credit' value='<?php echo $cust['pending_credit']; ?>' class='form-control form-control-lg me-2 mb-2' required>
                           <button type='submit' name='update_pending_credit' class='btn btn-info btn-lg'>Update</button>
                       </form>
+                  </td>
+                  <td>
+                      <?php
+                      // Find latest credit bill for this customer
+                      $creditBillStmt = $pdo->prepare("SELECT id FROM bills WHERE customer_id = ? AND payment_type = 'credit' ORDER BY closed_at DESC LIMIT 1");
+                      $creditBillStmt->execute([$cust['id']]);
+                      $creditBillId = $creditBillStmt->fetchColumn();
+                      if ($creditBillId) {
+                          echo '<a href="/possystem/public/printbill.php?bill_id=' . $creditBillId . '&autoprint=1" class="btn btn-secondary btn-lg" target="_blank">Print Bill</a>';
+                      } else {
+                          echo '<button class="btn btn-secondary btn-lg" disabled>No Bill</button>';
+                      }
+                      ?>
                   </td>
               </tr>
           <?php endforeach; ?>

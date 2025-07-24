@@ -13,7 +13,12 @@ require_once __DIR__ . '/../config.php';
 <body>
 <nav class="navbar navbar-expand-lg mb-4">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/possystem/public/index.php">Cafe POS</a>
+    <?php
+    require_once __DIR__ . '/../config.php';
+    $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
+    $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
+    ?>
+    <a class="navbar-brand" href="/possystem/public/index.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="#navbarNav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>

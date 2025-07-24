@@ -54,7 +54,12 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
 <body>
     <nav class="navbar navbar-expand-lg mb-4">
       <div class="container-fluid">
-        <a class="navbar-brand" href="/possystem/public/dashboard.php">Cafe POS</a>
+        <?php
+        require_once __DIR__ . '/../config.php';
+        $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
+        $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
+        ?>
+        <a class="navbar-brand" href="/possystem/public/dashboard.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="#navbarNav" aria-expanded="false" aria-label="Toggle navigation">
           <span class="navbar-toggler-icon"></span>
         </button>
@@ -64,6 +69,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
             <li class="nav-item"><a class="nav-link active" href="/possystem/reports/sales.php">Sales Report</a></li>
             <li class="nav-item"><a class="nav-link" href="/possystem/reports/inventory.php">Inventory Report</a></li>
             <li class="nav-item"><a class="nav-link" href="/possystem/reports/attendance.php">Attendance Report</a></li>
+            <li class="nav-item"><a class="nav-link" href="/possystem/public/logout.php">Logout</a></li>
           </ul>
         </div>
       </div>

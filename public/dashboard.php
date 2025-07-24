@@ -39,37 +39,57 @@ $inventory_days = $pdo->query("SELECT purchased_at as day, SUM(total_price) as i
 $inventory_days = array_reverse($inventory_days);
 
 // Daily sales for last 14 days for bar graph (by payment type)
-$sales_days_cash = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='cash' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
-$sales_days_cash = array_reverse($sales_days_cash);
+
+$sales_days_offline = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND (payment_type!='online' AND payment_type!='credit') GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+
+$sales_days_offline = array_reverse($sales_days_offline);
 $sales_days_online = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='online' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
 $sales_days_online = array_reverse($sales_days_online);
 $sales_days_credit = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='credit' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
 $sales_days_credit = array_reverse($sales_days_credit);
 
 // Daily inventory purchases for last 14 days for bar graph (by payment type)
-$inventory_days_cash = $pdo->query("SELECT purchased_at as day, SUM(total_price) as inventory FROM inventory_purchases WHERE payment_type='cash' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
-$inventory_days_cash = array_reverse($inventory_days_cash);
+$inventory_days_offline = $pdo->query("SELECT purchased_at as day, SUM(total_price) as inventory FROM inventory_purchases WHERE payment_type='offline' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+$inventory_days_offline = array_reverse($inventory_days_offline);
 $inventory_days_online = $pdo->query("SELECT purchased_at as day, SUM(total_price) as inventory FROM inventory_purchases WHERE payment_type='online' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
 $inventory_days_online = array_reverse($inventory_days_online);
 
 // Daily Inventory Purchase by payment type
-$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_price),0) as cash_inventory FROM inventory_purchases WHERE purchased_at = CURDATE() AND payment_type = 'cash'");
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_price),0) as offline_inventory FROM inventory_purchases WHERE purchased_at = CURDATE() AND payment_type = 'offline'");
 $stmt->execute();
-$cash_inventory = $stmt->fetch()['cash_inventory'];
+$offline_inventory = $stmt->fetch()['offline_inventory'];
 $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_price),0) as online_inventory FROM inventory_purchases WHERE purchased_at = CURDATE() AND payment_type = 'online'");
 $stmt->execute();
 $online_inventory = $stmt->fetch()['online_inventory'];
 
 // Daily Sales breakdown by payment type
-$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as cash_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'cash'");
+
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as offline_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type!='online' AND payment_type!='credit'");
 $stmt->execute();
-$cash_sales = $stmt->fetch()['cash_sales'];
+$offline_sales = $stmt->fetch()['offline_sales'];
 $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as online_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'online'");
 $stmt->execute();
 $online_sales = $stmt->fetch()['online_sales'];
 $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as credit_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'credit'");
+
 $stmt->execute();
-$credit_sales = $stmt->fetch()['credit_sales'];
+$bills_today = $stmt->fetchAll();
+foreach ($bills_today as $bill) {
+    if ($bill['payment_type'] === 'split') {
+        // Get split payments for this bill
+        $splits = $pdo->prepare("SELECT payment_type, amount FROM bill_payments WHERE bill_id = ?");
+        $splits->execute([$bill['id']]);
+        foreach ($splits->fetchAll() as $split) {
+            if ($split['payment_type'] === 'offline') $offline_sales += floatval($split['amount']);
+            elseif ($split['payment_type'] === 'online') $online_sales += floatval($split['amount']);
+            elseif ($split['payment_type'] === 'credit') $credit_sales += floatval($split['amount']);
+        }
+    } else {
+        if ($bill['payment_type'] === 'offline') $offline_sales += floatval($bill['total_amount']);
+        elseif ($bill['payment_type'] === 'online') $online_sales += floatval($bill['total_amount']);
+        elseif ($bill['payment_type'] === 'credit') $credit_sales += floatval($bill['total_amount']);
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -103,7 +123,12 @@ $credit_sales = $stmt->fetch()['credit_sales'];
 <body>
 <nav class="navbar navbar-expand-lg mb-4">
   <div class="container-fluid">
-    <a class="navbar-brand" href="/possystem/public/dashboard.php">Cafe POS</a>
+    <?php
+    require_once __DIR__ . '/../config.php';
+    $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
+    $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
+    ?>
+    <a class="navbar-brand" href="/possystem/public/dashboard.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
@@ -125,7 +150,7 @@ $credit_sales = $stmt->fetch()['credit_sales'];
             <div class="card dashboard-card" style="background:#22c55e;color:#fff;">
                 <div class="card-header">Today's Sales (NPR)</div>
                 <div class="card-body">
-                    <div style="font-size:1.1rem;">Cash: <strong><?php echo number_format($cash_sales,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Offline: <strong><?php echo number_format($offline_sales,2); ?></strong></div>
                     <div style="font-size:1.1rem;">Online: <strong><?php echo number_format($online_sales,2); ?></strong></div>
                     <div style="font-size:1.1rem;">Credit: <strong><?php echo number_format($credit_sales,2); ?></strong></div>
                     <div style="font-size:1.2rem; margin-top:8px;">Total: <strong><?php echo number_format($daily_sales,2); ?></strong></div>
@@ -136,7 +161,7 @@ $credit_sales = $stmt->fetch()['credit_sales'];
             <div class="card dashboard-card" style="background:#6366f1;color:#fff;">
                 <div class="card-header">Today's Inventory Purchase (NPR)</div>
                 <div class="card-body">
-                    <div style="font-size:1.1rem;">Cash: <strong><?php echo number_format($cash_inventory,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Offline: <strong><?php echo number_format($offline_inventory,2); ?></strong></div>
                     <div style="font-size:1.1rem;">Online: <strong><?php echo number_format($online_inventory,2); ?></strong></div>
                     <div style="font-size:1.2rem; margin-top:8px;">Total: <strong><?php echo number_format($daily_inventory,2); ?></strong></div>
                 </div>
@@ -171,7 +196,7 @@ $credit_sales = $stmt->fetch()['credit_sales'];
 <script>
 const salesLabels = <?php echo json_encode(array_map(function($d){return $d['day'];}, $sales_days)); ?>;
 const salesData = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days)); ?>;
-const salesDataCash = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_cash)); ?>;
+const salesDataOffline = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_offline)); ?>;
 const salesDataOnline = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_online)); ?>;
 const salesDataCredit = <?php echo json_encode(array_map(function($d){return (float)$d['sales'];}, $sales_days_credit)); ?>;
 const ctx = document.getElementById('salesBarChart').getContext('2d');
@@ -181,8 +206,8 @@ new Chart(ctx, {
         labels: salesLabels,
         datasets: [
             {
-                label: 'Sales (NPR) - Cash',
-                data: salesDataCash,
+                label: 'Sales (NPR) - Offline',
+                data: salesDataOffline,
                 backgroundColor: '#22c55e',
             },
             {
@@ -211,7 +236,7 @@ new Chart(ctx, {
 });
 const inventoryLabels = <?php echo json_encode(array_map(function($d){return $d['day'];}, $inventory_days)); ?>;
 const inventoryData = <?php echo json_encode(array_map(function($d){return (float)$d['inventory'];}, $inventory_days)); ?>;
-const inventoryDataCash = <?php echo json_encode(array_map(function($d){return (float)$d['inventory'];}, $inventory_days_cash)); ?>;
+const inventoryDataOffline = <?php echo json_encode(array_map(function($d){return (float)$d['inventory'];}, $inventory_days_offline)); ?>;
 const inventoryDataOnline = <?php echo json_encode(array_map(function($d){return (float)$d['inventory'];}, $inventory_days_online)); ?>;
 const ctx2 = document.getElementById('inventoryBarChart').getContext('2d');
 new Chart(ctx2, {
@@ -220,8 +245,8 @@ new Chart(ctx2, {
         labels: inventoryLabels,
         datasets: [
             {
-                label: 'Inventory Purchase (NPR) - Cash',
-                data: inventoryDataCash,
+                label: 'Inventory Purchase (NPR) - Offline',
+                data: inventoryDataOffline,
                 backgroundColor: '#22c55e',
             },
             {

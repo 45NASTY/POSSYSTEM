@@ -16,8 +16,26 @@ $booked_tables = $pdo->query("SELECT * FROM tables WHERE status='occupied' ORDER
 $menu_items = $pdo->query("SELECT mi.*, mc.name as category FROM menu_items mi JOIN menu_categories mc ON mi.category_id = mc.id ORDER BY mc.name, mi.name")->fetchAll();
 $customers = $pdo->query("SELECT * FROM customers ORDER BY name")->fetchAll();
 
-// Handle add item, save bill, and checkout
+// Handle add item, save bill, checkout, and switch table
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Remove entire bill and unbook table
+    if (isset($_POST['remove_bill'])) {
+        $bill_id = $_POST['bill_id'];
+        // Get table id before deleting bill
+        $stmt = $pdo->prepare("SELECT table_id FROM bills WHERE id=?");
+        $stmt->execute([$bill_id]);
+        $table_id = $stmt->fetchColumn();
+        // Delete bill items
+        $pdo->prepare("DELETE FROM bill_items WHERE bill_id=?")->execute([$bill_id]);
+        // Delete bill
+        $pdo->prepare("DELETE FROM bills WHERE id=?")->execute([$bill_id]);
+        // Set table to available
+        if ($table_id) {
+            $pdo->prepare("UPDATE tables SET status='available' WHERE id=?")->execute([$table_id]);
+        }
+        header('Location: billing.php');
+        exit;
+    }
     if (isset($_POST['add_item'])) {
         $table_id = $_POST['table_id'];
         $menu_item_id = $_POST['menu_item_id'];
@@ -48,10 +66,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $bill_id = $_POST['bill_id'];
         $payment_type = $_POST['payment_type'];
         $customer_id = isset($_POST['customer_id']) ? $_POST['customer_id'] : null;
+        // Always recalculate and update bill total before closing
+        $stmt = $pdo->prepare("SELECT SUM(quantity*price) as total FROM bill_items WHERE bill_id=?");
+        $stmt->execute([$bill_id]);
+        $total = $stmt->fetch()['total'] ?? 0;
+        $pdo->prepare("UPDATE bills SET total_amount=? WHERE id=?")->execute([$total, $bill_id]);
         if ($payment_type === 'credit' && $customer_id) {
-            $stmt = $pdo->prepare("SELECT total_amount FROM bills WHERE id=?");
-            $stmt->execute([$bill_id]);
-            $bill_total = $stmt->fetchColumn();
+            // Use the recalculated total
+            $bill_total = $total;
             // Update pending_credit for customer
             $stmt = $pdo->prepare("UPDATE customers SET pending_credit = pending_credit + ? WHERE id=?");
             $stmt->execute([$bill_total, $customer_id]);
@@ -62,9 +84,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) FROM bills WHERE customer_id=? AND status='closed' AND payment_type='credit'");
             $stmt->execute([$customer_id]);
             $used = $stmt->fetchColumn();
-            $stmt = $pdo->prepare("SELECT total_amount FROM bills WHERE id=?");
-            $stmt->execute([$bill_id]);
-            $bill_total = $stmt->fetchColumn();
             if ($used + $bill_total > $limit) {
                 $error = "Credit limit exceeded!"; // Only show warning
             }
@@ -75,6 +94,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->prepare("UPDATE tables SET status='available' WHERE id=(SELECT table_id FROM bills WHERE id=?)")->execute([$bill_id]);
         }
     }
+    if (isset($_POST['split_checkout'])) {
+        $bill_id = $_POST['bill_id'];
+        $split_amounts = isset($_POST['split_amount']) ? $_POST['split_amount'] : [];
+        $split_types = isset($_POST['split_type']) ? $_POST['split_type'] : [];
+        $split_customers = isset($_POST['split_customer']) ? $_POST['split_customer'] : [];
+        // Validate split total
+        $stmt = $pdo->prepare("SELECT total_amount FROM bills WHERE id=?");
+        $stmt->execute([$bill_id]);
+        $bill_total = floatval($stmt->fetchColumn());
+        $split_total = 0;
+        foreach ($split_amounts as $idx => $amt) {
+            $split_total += floatval($amt);
+        }
+        if (abs($split_total - $bill_total) > 0.01) {
+            // Invalid split, do not process
+            header('Location: billing.php');
+            exit;
+        }
+        // Remove any previous payments for this bill (if re-submitted)
+        $pdo->prepare("DELETE FROM bill_payments WHERE bill_id=?")->execute([$bill_id]);
+        // Process each split row
+        foreach ($split_amounts as $idx => $amt) {
+            $type = $split_types[$idx];
+            $amount = floatval($amt);
+            $customer_id = ($type === 'credit' && isset($split_customers[$idx]) && $split_customers[$idx]) ? $split_customers[$idx] : null;
+            // Insert into bill_payments
+            $pdo->prepare("INSERT INTO bill_payments (bill_id, payment_type, amount, customer_id) VALUES (?, ?, ?, ?)")
+                ->execute([$bill_id, $type, $amount, $customer_id]);
+            // If credit, update customer pending_credit
+            if ($type === 'credit' && $customer_id) {
+                $pdo->prepare("UPDATE customers SET pending_credit = pending_credit + ? WHERE id=?")
+                    ->execute([$amount, $customer_id]);
+            }
+        }
+        // Close the bill and free the table
+        $pdo->prepare("UPDATE bills SET status='closed', closed_at=NOW(), payment_type='split', customer_id=NULL WHERE id=?")->execute([$bill_id]);
+        $pdo->prepare("UPDATE tables SET status='available' WHERE id=(SELECT table_id FROM bills WHERE id=?)")->execute([$bill_id]);
+        header('Location: billing.php');
+        exit;
+    }
     if (isset($_POST['remove_bill_item'])) {
         $bill_item_id = $_POST['bill_item_id'];
         $pdo->prepare("DELETE FROM bill_items WHERE id=?")->execute([$bill_item_id]);
@@ -84,6 +143,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$bill_id]);
         $total = $stmt->fetch()['total'] ?? 0;
         $pdo->prepare("UPDATE bills SET total_amount=? WHERE id=?")->execute([$total, $bill_id]);
+        header('Location: billing.php');
+        exit;
+    }
+    // Switch table logic
+    if (isset($_POST['switch_table']) && isset($_POST['bill_id']) && isset($_POST['new_table_id'])) {
+        $bill_id = $_POST['bill_id'];
+        $new_table_id = $_POST['new_table_id'];
+        // Get current table id
+        $stmt = $pdo->prepare("SELECT table_id FROM bills WHERE id=?");
+        $stmt->execute([$bill_id]);
+        $old_table_id = $stmt->fetchColumn();
+        // Update bill's table_id
+        $pdo->prepare("UPDATE bills SET table_id=? WHERE id=?")->execute([$new_table_id, $bill_id]);
+        // Set old table to available
+        $pdo->prepare("UPDATE tables SET status='available' WHERE id=?")->execute([$old_table_id]);
+        // Set new table to occupied
+        $pdo->prepare("UPDATE tables SET status='occupied' WHERE id=?")->execute([$new_table_id]);
         header('Location: billing.php');
         exit;
     }
@@ -157,9 +233,13 @@ foreach ($booked_tables as $table) {
   </div>
 </div>
 <script>
+
 const menuItems = <?php echo json_encode($menu_items); ?>;
 const customers = <?php echo json_encode($customers); ?>;
 const bills = <?php echo json_encode($bills); ?>;
+const bookedTables = <?php echo json_encode($booked_tables); ?>;
+// Get available tables for switch
+const availableTables = <?php echo json_encode($pdo->query("SELECT * FROM tables WHERE status='available' ORDER BY table_number")->fetchAll()); ?>;
 // Pass used credit for each customer
 const customerCredits = {};
 <?php foreach ($customers as $c): ?>
@@ -200,38 +280,193 @@ function renderBillingModal(tableId, tableNumber) {
         }
         <?php endforeach; ?>
         html += `</ul><strong>Total: NPR ${parseFloat(bill.total_amount||0).toFixed(2)}</strong>`;
-        // Payment section
-        html += `<form method='post' class='mt-3'><input type='hidden' name='bill_id' value='${bill.id}'>`;
-        html += `<div class='mb-2'><label class='form-label'>Payment Type:</label><select name='payment_type' class='form-select' required id='payment-type'><option value='online'>Online</option><option value='offline'>Offline</option><option value='credit' selected>Credit</option></select></div>`;
-        html += `<div class='mb-2' id='customer-select'><label class='form-label'>Select Customer:</label><select name='customer_id' class='form-select' id='customer-id'>`;
-        customers.forEach((c, idx) => { html += `<option value='${c.id}'${idx===0?' selected':''}>${c.name} (${c.phone})</option>`; });
-        html += `</select></div>`;
-        html += `<div id='credit-warning'></div>`;
-        html += `<button type='submit' name='checkout' class='btn btn-danger'>Checkout</button></form>`;
+
+        // Remove Bill button
+        html += `<form method='post' class='mt-2'><input type='hidden' name='bill_id' value='${bill.id}'><button type='submit' name='remove_bill' class='btn btn-outline-danger btn-sm'>Remove Bill & Unbook Table</button></form>`;
+
+        // Direct Payment Section
+        html += `<form method='post' class='mt-3' id='direct-payment-form'><input type='hidden' name='bill_id' value='${bill.id}'>`;
+        html += `<div class='mb-2'><label class='form-label'>Direct Payment:</label></div>`;
+        html += `<div class='row g-2 mb-2'>`;
+        html += `<div class='col-4'><select name='payment_type' class='form-select' id='direct-payment-type' required>
+            <option value='online'>Online</option>
+            <option value='offline'>Offline</option>
+            <option value='credit'>Credit</option>
+        </select></div>`;
+        html += `<div class='col-5' id='direct-customer-select' style='display:none;'>
+            <select name='customer_id' class='form-select' id='direct-customer-id'>
+                <option value=''>Select Customer</option>
+                ${customers.map(c => `<option value='${c.id}'>${c.name} (${c.phone})</option>`).join('')}
+            </select>
+        </div>`;
+        html += `<div class='col-3'><button type='submit' name='checkout' class='btn btn-success'>Checkout (Direct)</button></div>`;
+        html += `</div>`;
+        html += `<div id='direct-credit-warning'></div>`;
+        html += `</form>`;
+
+        // Split Payment Section
+        html += `<form method='post' class='mt-3' id='split-payment-form'><input type='hidden' name='bill_id' value='${bill.id}'>`;
+        html += `<div class='mb-2'><label class='form-label'>Split Payment:</label></div>`;
+        html += `<div id='split-payments-container'></div>`;
+        html += `<button type='button' class='btn btn-secondary btn-sm mb-2' id='add-split-btn'>Add Split</button>`;
+        html += `<div id='split-error' class='text-danger mb-2'></div>`;
+        html += `<button type='submit' name='split_checkout' class='btn btn-danger'>Checkout (Split)</button></form>`;
+
     }
     document.getElementById('billing-modal-body').innerHTML = html;
-    // Always show customer select and warning for credit by default
+    // Split payment UI logic
     setTimeout(() => {
-        let paymentType = document.getElementById('payment-type');
-        let customerId = document.getElementById('customer-id');
-        if (paymentType && paymentType.value === 'credit' && customerId) {
-            showCreditWarning(customerId.value, bill ? bill.total_amount : 0);
-        }
-        paymentType.addEventListener('change', function() {
-            let customerSelect = document.getElementById('customer-select');
-            if (this.value === 'credit') {
-                customerSelect.style.display = '';
-                let customerId = document.getElementById('customer-id');
-                if (customerId) showCreditWarning(customerId.value, bill ? bill.total_amount : 0);
-            } else {
-                customerSelect.style.display = 'none';
-                document.getElementById('credit-warning').innerHTML = '';
+        // Direct payment customer select logic
+        const directType = document.getElementById('direct-payment-type');
+        const directCustCol = document.getElementById('direct-customer-select');
+        const directCustId = document.getElementById('direct-customer-id');
+        const directCreditWarning = document.getElementById('direct-credit-warning');
+        if (directType) {
+            function updateDirectCustomer() {
+                if (directType.value === 'credit') {
+                    directCustCol.style.display = '';
+                } else {
+                    directCustCol.style.display = 'none';
+                    directCreditWarning.innerHTML = '';
+                }
             }
-        });
-        let customerIdSelect = document.getElementById('customer-id');
-        customerIdSelect.addEventListener('change', function() {
-            showCreditWarning(this.value, bill ? bill.total_amount : 0);
-        });
+            function updateDirectCreditWarning() {
+                if (directType.value === 'credit' && directCustId.value) {
+                    let customer = customers.find(c => c.id == directCustId.value);
+                    let usedCredit = parseFloat(customerCredits[directCustId.value] || 0);
+                    let creditLimit = parseFloat(customer.credit_limit);
+                    let billTotal = parseFloat(bill.total_amount||0);
+                    if ((usedCredit + billTotal) > creditLimit) {
+                        directCreditWarning.innerHTML = `<div class='alert alert-warning mt-2'>Warning: This bill will exceed the customer's credit limit!</div>`;
+                    } else {
+                        directCreditWarning.innerHTML = '';
+                    }
+                } else {
+                    directCreditWarning.innerHTML = '';
+                }
+            }
+            directType.addEventListener('change', function() {
+                updateDirectCustomer();
+                updateDirectCreditWarning();
+            });
+            if (directCustId) {
+                directCustId.addEventListener('change', function() {
+                    updateDirectCreditWarning();
+                });
+            }
+            updateDirectCustomer();
+        }
+
+        // Split payment logic (unchanged)
+        const splitPaymentsContainer = document.getElementById('split-payments-container');
+        const addSplitBtn = document.getElementById('add-split-btn');
+        let splitIndex = 0;
+        function createSplitRow(idx) {
+            return `<div class='row g-2 mb-2 split-row' data-idx='${idx}'>
+                <div class='col-4'><input type='number' step='0.01' min='0' name='split_amount[${idx}]' class='form-control split-amount' placeholder='Amount' required></div>
+                <div class='col-4'><select name='split_type[${idx}]' class='form-select split-type' required>
+                    <option value='online'>Online</option>
+                    <option value='offline'>Offline</option>
+                    <option value='credit'>Credit</option>
+                </select></div>
+                <div class='col-3 split-customer-col' style='display:none;'>
+                    <select name='split_customer[${idx}]' class='form-select split-customer'>
+                        <option value=''>Select Customer</option>
+                        ${customers.map(c => `<option value='${c.id}'>${c.name} (${c.phone})</option>`).join('')}
+                    </select>
+                </div>
+                <div class='col-1'><button type='button' class='btn btn-outline-danger btn-sm remove-split-btn'>&times;</button></div>
+                <div class='col-12 split-credit-warning'></div>
+            </div>`;
+        }
+        function updateCustomerSelects() {
+            splitPaymentsContainer.querySelectorAll('.split-row').forEach(row => {
+                const typeSel = row.querySelector('.split-type');
+                const custCol = row.querySelector('.split-customer-col');
+                if (typeSel.value === 'credit') {
+                    custCol.style.display = '';
+                } else {
+                    custCol.style.display = 'none';
+                    row.querySelector('.split-credit-warning').innerHTML = '';
+                }
+            });
+        }
+        function updateCreditWarnings() {
+            splitPaymentsContainer.querySelectorAll('.split-row').forEach(row => {
+                const typeSel = row.querySelector('.split-type');
+                if (typeSel.value === 'credit') {
+                    let warningDiv = row.querySelector('.split-credit-warning');
+                    const custSel = row.querySelector('.split-customer');
+                    const amt = parseFloat(row.querySelector('.split-amount').value || 0);
+                    const customerId = custSel.value;
+                    if (customerId) {
+                        let customer = customers.find(c => c.id == customerId);
+                        let usedCredit = parseFloat(customerCredits[customerId] || 0);
+                        let creditLimit = parseFloat(customer.credit_limit);
+                        if ((usedCredit + amt) > creditLimit) {
+                            warningDiv.innerHTML = `<div class='alert alert-warning mt-2'>Warning: ${customer.name} will exceed credit limit!</div>`;
+                        } else {
+                            warningDiv.innerHTML = '';
+                        }
+                    } else {
+                        warningDiv.innerHTML = '';
+                    }
+                }
+            });
+        }
+        function validateSplitTotal() {
+            let total = 0;
+            splitPaymentsContainer.querySelectorAll('.split-row').forEach(row => {
+                total += parseFloat(row.querySelector('.split-amount').value || 0);
+            });
+            let errorDiv = document.getElementById('split-error');
+            if (Math.abs(total - parseFloat(bill.total_amount||0)) > 0.01) {
+                errorDiv.textContent = `Split total (NPR ${total.toFixed(2)}) must match bill total (NPR ${parseFloat(bill.total_amount||0).toFixed(2)})`;
+                return false;
+            } else {
+                errorDiv.textContent = '';
+                return true;
+            }
+        }
+        function addSplitRow() {
+            splitPaymentsContainer.insertAdjacentHTML('beforeend', createSplitRow(splitIndex));
+            splitIndex++;
+            updateCustomerSelects();
+        }
+        if (addSplitBtn) {
+            addSplitBtn.addEventListener('click', function() {
+                addSplitRow();
+            });
+        }
+        if (splitPaymentsContainer) {
+            splitPaymentsContainer.addEventListener('change', function(e) {
+                if (e.target.classList.contains('split-type')) {
+                    updateCustomerSelects();
+                    updateCreditWarnings();
+                }
+                if (e.target.classList.contains('split-customer') || e.target.classList.contains('split-amount')) {
+                    updateCreditWarnings();
+                }
+                validateSplitTotal();
+            });
+            splitPaymentsContainer.addEventListener('input', function(e) {
+                if (e.target.classList.contains('split-amount')) {
+                    updateCreditWarnings();
+                    validateSplitTotal();
+                }
+            });
+            splitPaymentsContainer.addEventListener('click', function(e) {
+                if (e.target.classList.contains('remove-split-btn')) {
+                    e.target.closest('.split-row').remove();
+                    updateCustomerSelects();
+                    updateCreditWarnings();
+                    validateSplitTotal();
+                }
+            });
+            // Add two split rows by default
+            addSplitRow();
+            addSplitRow();
+        }
     }, 100);
 }
 

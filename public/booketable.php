@@ -42,6 +42,7 @@ $tables = $pdo->query("SELECT * FROM tables ORDER BY table_number")->fetchAll();
             <li class="nav-item"><a class="nav-link" href="/possystem/public/booketable.php">Table Booking</a></li>
             <li class="nav-item"><a class="nav-link" href="/possystem/public/billing.php">Table Billing</a></li>
             <li class="nav-item"><a class="nav-link" href="/possystem/public/printbill.php">Print Bill</a></li>
+            <li class="nav-item"><a class="nav-link" href="/possystem/public/logout.php">Logout</a></li>
           </ul>
         </div>
       </div>

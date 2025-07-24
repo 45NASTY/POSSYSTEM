@@ -106,3 +106,15 @@ CREATE TABLE attendance (
     date DATE NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+
+CREATE TABLE bill_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bill_id INT NOT NULL,
+    payment_type VARCHAR(20) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    customer_id INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (bill_id) REFERENCES bills(id),
+    FOREIGN KEY (customer_id) REFERENCES customers(id)
+);

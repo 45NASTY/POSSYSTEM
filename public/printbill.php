@@ -11,8 +11,8 @@ if (!isset($_SESSION['user_id'])) {
 $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
 $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
 
-// Fetch recently checked out bills (online/offline)
-$stmt = $pdo->prepare("SELECT b.id, b.table_id, b.total_amount, b.payment_type, b.closed_at, t.table_number FROM bills b JOIN tables t ON b.table_id = t.id WHERE b.status = 'closed' AND (b.payment_type = 'online' OR b.payment_type = 'offline') ORDER BY b.closed_at DESC LIMIT 20");
+// Fetch recently checked out bills (online/offline/split)
+$stmt = $pdo->prepare("SELECT b.id, b.table_id, b.total_amount, b.payment_type, b.closed_at, t.table_number FROM bills b JOIN tables t ON b.table_id = t.id WHERE b.status = 'closed' AND (b.payment_type = 'online' OR b.payment_type = 'offline' OR b.payment_type = 'split') ORDER BY b.closed_at DESC LIMIT 20");
 $stmt->execute();
 $bills = $stmt->fetchAll();
 ?>
@@ -37,12 +37,13 @@ $bills = $stmt->fetchAll();
             <li class="nav-item"><a class="nav-link" href="/possystem/public/booketable.php">Table Booking</a></li>
             <li class="nav-item"><a class="nav-link" href="/possystem/public/billing.php">Table Billing</a></li>
             <li class="nav-item"><a class="nav-link" href="/possystem/public/printbill.php">Print Bill</a></li>
+            <li class="nav-item"><a class="nav-link" href="/possystem/public/logout.php">Logout</a></li>
           </ul>
         </div>
       </div>
     </nav>
     <div class='container mt-4'>
-    <h3>Recently Checked Out Bills (Online/Offline)</h3>
+    <h3>Recently Checked Out Bills (Online/Offline/Split)</h3>
     <table class="table table-bordered">
         <thead>
             <tr>
@@ -105,7 +106,28 @@ $bills = $stmt->fetchAll();
             echo '<p>Subtotal: Rs. '.number_format($subtotal,2).'</p>';
             echo '<p>VAT (13%): Rs. '.number_format($vat,2).'</p>';
             echo '<p>Grand Total: Rs. '.number_format($bill['total_amount'],2).'</p>';
-            echo '<p>Paid (Cash/Card): Rs. '.number_format($bill['total_amount'],2).'</p>';
+            // Payment breakdown
+            if ($bill['payment_type'] === 'split') {
+                // Show split payment breakdown
+                $split_stmt = $pdo->prepare("SELECT bp.*, c.name as customer_name FROM bill_payments bp LEFT JOIN customers c ON bp.customer_id = c.id WHERE bp.bill_id = ?");
+                $split_stmt->execute([$bill_id]);
+                $splits = $split_stmt->fetchAll();
+                echo '<p><strong>Split Payment Breakdown:</strong></p>';
+                echo '<table border="1" width="100%" cellspacing="0" cellpadding="5">';
+                echo '<tr><th>Type</th><th>Amount (Rs.)</th><th>Customer</th></tr>';
+                foreach ($splits as $sp) {
+                    echo '<tr>';
+                    echo '<td>'.ucfirst($sp['payment_type']).'</td>';
+                    echo '<td>'.number_format($sp['amount'],2).'</td>';
+                    echo '<td>'.($sp['payment_type']==='credit' ? htmlspecialchars($sp['customer_name']) : '-').'</td>';
+                    echo '</tr>';
+                }
+                echo '</table>';
+                $paid_total = array_sum(array_column($splits, 'amount'));
+                echo '<p>Total Paid: Rs. '.number_format($paid_total,2).'</p>';
+            } else {
+                echo '<p>Paid ('.ucfirst($bill['payment_type']).'): Rs. '.number_format($bill['total_amount'],2).'</p>';
+            }
             echo '<hr>';
             echo '<p>Thank you! Please visit again.</p>';
             echo '</body></html>';
