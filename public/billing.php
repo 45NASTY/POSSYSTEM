@@ -100,9 +100,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $split_types = isset($_POST['split_type']) ? $_POST['split_type'] : [];
         $split_customers = isset($_POST['split_customer']) ? $_POST['split_customer'] : [];
         // Validate split total
-        $stmt = $pdo->prepare("SELECT total_amount FROM bills WHERE id=?");
+        $stmt = $pdo->prepare("SELECT total_amount, table_id FROM bills WHERE id=?");
         $stmt->execute([$bill_id]);
-        $bill_total = floatval($stmt->fetchColumn());
+        $bill_row = $stmt->fetch();
+        $bill_total = floatval($bill_row['total_amount']);
+        $table_id = $bill_row['table_id'];
         $split_total = 0;
         foreach ($split_amounts as $idx => $amt) {
             $split_total += floatval($amt);
@@ -112,25 +114,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: billing.php');
             exit;
         }
-        // Remove any previous payments for this bill (if re-submitted)
-        $pdo->prepare("DELETE FROM bill_payments WHERE bill_id=?")->execute([$bill_id]);
-        // Process each split row
+        // Fetch all bill items from the original bill
+        $stmt = $pdo->prepare("SELECT menu_item_id, quantity, price FROM bill_items WHERE bill_id=?");
+        $stmt->execute([$bill_id]);
+        $bill_items = $stmt->fetchAll();
+        // For each split, create a new closed bill and copy items
         foreach ($split_amounts as $idx => $amt) {
             $type = $split_types[$idx];
             $amount = floatval($amt);
             $customer_id = ($type === 'credit' && isset($split_customers[$idx]) && $split_customers[$idx]) ? $split_customers[$idx] : null;
-            // Insert into bill_payments
-            $pdo->prepare("INSERT INTO bill_payments (bill_id, payment_type, amount, customer_id) VALUES (?, ?, ?, ?)")
-                ->execute([$bill_id, $type, $amount, $customer_id]);
+            // Insert new closed bill for this split (each with only its split amount)
+            $pdo->prepare("INSERT INTO bills (table_id, status, created_at, closed_at, payment_type, total_amount, customer_id) VALUES (?, 'closed', NOW(), NOW(), ?, ?, ?)")
+                ->execute([$table_id, $type, $amount, $customer_id]);
+            $new_bill_id = $pdo->lastInsertId();
+            // Copy all items to new bill (each split bill gets the same items, but the total_amount is only the split amount)
+            foreach ($bill_items as $item) {
+                $pdo->prepare("INSERT INTO bill_items (bill_id, menu_item_id, quantity, price) VALUES (?, ?, ?, ?)")
+                    ->execute([$new_bill_id, $item['menu_item_id'], $item['quantity'], $item['price']]);
+            }
             // If credit, update customer pending_credit
             if ($type === 'credit' && $customer_id) {
                 $pdo->prepare("UPDATE customers SET pending_credit = pending_credit + ? WHERE id=?")
                     ->execute([$amount, $customer_id]);
             }
         }
-        // Close the bill and free the table
-        $pdo->prepare("UPDATE bills SET status='closed', closed_at=NOW(), payment_type='split', customer_id=NULL WHERE id=?")->execute([$bill_id]);
-        $pdo->prepare("UPDATE tables SET status='available' WHERE id=(SELECT table_id FROM bills WHERE id=?)")->execute([$bill_id]);
+        // Delete original bill and its items
+        $pdo->prepare("DELETE FROM bill_items WHERE bill_id=?")->execute([$bill_id]);
+        $pdo->prepare("DELETE FROM bills WHERE id=?")->execute([$bill_id]);
+        // Set table to available
+        $pdo->prepare("UPDATE tables SET status='available' WHERE id=?")->execute([$table_id]);
         header('Location: billing.php');
         exit;
     }
@@ -179,11 +191,13 @@ foreach ($booked_tables as $table) {
 <!DOCTYPE html>
 <html lang='en'>
 <head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <meta charset='UTF-8'>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
     <title>Table Billing</title>
     <link href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css' rel='stylesheet'>
     <link href='/possystem/public/style.css' rel='stylesheet'>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.3/font/bootstrap-icons.css">
 </head>
 <body>
     <nav class="navbar navbar-expand-lg mb-4">
@@ -282,7 +296,50 @@ function renderBillingModal(tableId, tableNumber) {
         html += `</ul><strong>Total: NPR ${parseFloat(bill.total_amount||0).toFixed(2)}</strong>`;
 
         // Remove Bill button
-        html += `<form method='post' class='mt-2'><input type='hidden' name='bill_id' value='${bill.id}'><button type='submit' name='remove_bill' class='btn btn-outline-danger btn-sm'>Remove Bill & Unbook Table</button></form>`;
+        html += `<form method='post' class='mt-2 d-inline'><input type='hidden' name='bill_id' value='${bill.id}'><button type='submit' name='remove_bill' class='btn btn-outline-danger btn-sm me-2'><i class='bi bi-x-circle'></i> Remove Bill & Unbook Table</button></form>`;
+        // Transfer Table Button (improved)
+        html += `<button type='button' class='btn btn-warning btn-sm fw-bold ms-1' style='color:#333;box-shadow:0 2px 8px #0001;' data-bs-toggle='modal' data-bs-target='#transferTableModal${bill.id}'><i class='bi bi-arrow-left-right'></i> Transfer Table</button>`;
+        // Transfer Table Modal (improved)
+        html += `
+        <div class='modal fade' id='transferTableModal${bill.id}' tabindex='-1' aria-labelledby='transferTableModalLabel${bill.id}' aria-hidden='true'>
+          <div class='modal-dialog'>
+            <div class='modal-content rounded-4 shadow-lg border-0'>
+              <form method='post' autocomplete='off'>
+                <div class='modal-header bg-gradient bg-primary bg-opacity-25 rounded-top-4 border-0'>
+                  <h5 class='modal-title fw-bold d-flex align-items-center gap-2' id='transferTableModalLabel${bill.id}'><span class='text-warning'><i class='bi bi-arrow-left-right'></i></span> Transfer Table</h5>
+                  <button type='button' class='btn-close' data-bs-dismiss='modal' aria-label='Close'></button>
+                </div>
+                <div class='modal-body pb-0'>
+                  <input type='hidden' name='bill_id' value='${bill.id}'>
+                  <div class='mb-4'>
+                    <label for='new_table_id${bill.id}' class='form-label fw-semibold'>Select New Table</label>
+                    <select class='form-select form-select-lg border-2 border-warning' name='new_table_id' id='new_table_id${bill.id}' required style='font-size:1.1rem;'>
+                      <option value='' disabled selected>🪑 Choose a table...</option>
+                      ${availableTables.filter(t => String(t.id) !== String(tableId)).map(t => `<option value='${t.id}'>🪑 Table ${t.table_number} (${t.status.charAt(0).toUpperCase() + t.status.slice(1)})</option>`).join('')}
+                    </select>
+                  </div>
+                  <div class='alert alert-info small rounded-3 border-0 mb-0' style='background:#f8fafc;'>
+                    <i class='bi bi-info-circle-fill text-primary'></i> Transferring will move this bill and all items to the selected table.<br>The current table will be freed for new customers.
+                  </div>
+                </div>
+                <div class='modal-footer d-flex justify-content-between border-0 pt-0 pb-4'>
+                  <button type='button' class='btn btn-outline-secondary px-4 rounded-pill' data-bs-dismiss='modal'><i class='bi bi-x-lg'></i> Cancel</button>
+                  <button type='submit' name='switch_table' class='btn btn-success px-4 rounded-pill fw-bold' id='transferBtn${bill.id}' disabled><i class='bi bi-arrow-repeat'></i> Transfer</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>`;
+        // Enable Transfer button only if a table is selected
+        setTimeout(() => {
+          const sel = document.getElementById('new_table_id'+bill.id);
+          const btn = document.getElementById('transferBtn'+bill.id);
+          if (sel && btn) {
+            sel.addEventListener('change', function() {
+              btn.disabled = !sel.value;
+            });
+          }
+        }, 300);
 
         // Direct Payment Section
         html += `<form method='post' class='mt-3' id='direct-payment-form'><input type='hidden' name='bill_id' value='${bill.id}'>`;

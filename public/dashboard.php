@@ -7,10 +7,14 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Daily Sales (reduced)
-$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as daily_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed'");
+// Daily Sales (include split payments)
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as non_split_sales FROM bills WHERE DATE(closed_at) = CURDATE() AND status = 'closed' AND payment_type != 'split'");
 $stmt->execute();
-$daily_sales = $stmt->fetch()['daily_sales'];
+$non_split_sales = $stmt->fetch()['non_split_sales'];
+$stmt = $pdo->prepare("SELECT IFNULL(SUM(bp.amount),0) as split_sales FROM bill_payments bp INNER JOIN bills b ON bp.bill_id = b.id WHERE b.payment_type = 'split' AND DATE(b.closed_at) = CURDATE() AND b.status = 'closed'");
+$stmt->execute();
+$split_sales = $stmt->fetch()['split_sales'];
+$daily_sales = $non_split_sales + $split_sales;
 
 // Daily Inventory Purchase
 $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_price),0) as daily_inventory FROM inventory_purchases WHERE purchased_at = CURDATE()");
@@ -30,22 +34,78 @@ $stmt = $pdo->prepare("SELECT COUNT(*) as count_month FROM bills WHERE MONTH(cre
 $stmt->execute();
 $count_month = $stmt->fetch()['count_month'];
 
-// Daily sales for last 14 days for bar graph
-$sales_days = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+// Daily sales for last 14 days for bar graph (include split payments)
+$sales_days = $pdo->query("
+    SELECT day, SUM(sales) as sales FROM (
+        SELECT DATE(closed_at) as day, total_amount as sales
+        FROM bills
+        WHERE status='closed' AND closed_at IS NOT NULL AND payment_type != 'split'
+        UNION ALL
+        SELECT DATE(b.closed_at) as day, bp.amount as sales
+        FROM bill_payments bp
+        INNER JOIN bills b ON bp.bill_id = b.id
+        WHERE b.status='closed' AND b.closed_at IS NOT NULL AND b.payment_type = 'split'
+    ) t
+    GROUP BY day
+    ORDER BY day DESC
+    LIMIT 14
+")->fetchAll();
 $sales_days = array_reverse($sales_days);
 
 // Daily inventory purchases for last 14 days for bar graph
 $inventory_days = $pdo->query("SELECT purchased_at as day, SUM(total_price) as inventory FROM inventory_purchases GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
 $inventory_days = array_reverse($inventory_days);
 
-// Daily sales for last 14 days for bar graph (by payment type)
-
-$sales_days_offline = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND (payment_type!='online' AND payment_type!='credit') GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
-
+// Daily sales for last 14 days for bar graph (by payment type, include split payments)
+$sales_days_offline = $pdo->query("
+    SELECT day, SUM(sales) as sales FROM (
+        SELECT DATE(closed_at) as day, total_amount as sales
+        FROM bills
+        WHERE status='closed' AND closed_at IS NOT NULL AND payment_type = 'offline'
+        UNION ALL
+        SELECT DATE(b.closed_at) as day, bp.amount as sales
+        FROM bill_payments bp
+        INNER JOIN bills b ON bp.bill_id = b.id
+        WHERE b.status='closed' AND b.closed_at IS NOT NULL AND b.payment_type = 'split' AND bp.payment_type = 'offline'
+    ) t
+    GROUP BY day
+    ORDER BY day DESC
+    LIMIT 14
+")->fetchAll();
 $sales_days_offline = array_reverse($sales_days_offline);
-$sales_days_online = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='online' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+
+$sales_days_online = $pdo->query("
+    SELECT day, SUM(sales) as sales FROM (
+        SELECT DATE(closed_at) as day, total_amount as sales
+        FROM bills
+        WHERE status='closed' AND closed_at IS NOT NULL AND payment_type = 'online'
+        UNION ALL
+        SELECT DATE(b.closed_at) as day, bp.amount as sales
+        FROM bill_payments bp
+        INNER JOIN bills b ON bp.bill_id = b.id
+        WHERE b.status='closed' AND b.closed_at IS NOT NULL AND b.payment_type = 'split' AND bp.payment_type = 'online'
+    ) t
+    GROUP BY day
+    ORDER BY day DESC
+    LIMIT 14
+")->fetchAll();
 $sales_days_online = array_reverse($sales_days_online);
-$sales_days_credit = $pdo->query("SELECT DATE(closed_at) as day, SUM(total_amount) as sales FROM bills WHERE status='closed' AND closed_at IS NOT NULL AND payment_type='credit' GROUP BY day ORDER BY day DESC LIMIT 14")->fetchAll();
+
+$sales_days_credit = $pdo->query("
+    SELECT day, SUM(sales) as sales FROM (
+        SELECT DATE(closed_at) as day, total_amount as sales
+        FROM bills
+        WHERE status='closed' AND closed_at IS NOT NULL AND payment_type = 'credit'
+        UNION ALL
+        SELECT DATE(b.closed_at) as day, bp.amount as sales
+        FROM bill_payments bp
+        INNER JOIN bills b ON bp.bill_id = b.id
+        WHERE b.status='closed' AND b.closed_at IS NOT NULL AND b.payment_type = 'split' AND bp.payment_type = 'credit'
+    ) t
+    GROUP BY day
+    ORDER BY day DESC
+    LIMIT 14
+")->fetchAll();
 $sales_days_credit = array_reverse($sales_days_credit);
 
 // Daily inventory purchases for last 14 days for bar graph (by payment type)
@@ -62,33 +122,17 @@ $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_price),0) as online_inventory FRO
 $stmt->execute();
 $online_inventory = $stmt->fetch()['online_inventory'];
 
-// Daily Sales breakdown by payment type
-
-$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as offline_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type!='online' AND payment_type!='credit'");
+// Daily Sales breakdown by payment type (all bills now stored in bills table)
+$offline_sales = 0;
+$online_sales = 0;
+$credit_sales = 0;
+$stmt = $pdo->prepare("SELECT payment_type, SUM(total_amount) as total FROM bills WHERE DATE(closed_at) = CURDATE() AND status = 'closed' GROUP BY payment_type");
 $stmt->execute();
-$offline_sales = $stmt->fetch()['offline_sales'];
-$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as online_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'online'");
-$stmt->execute();
-$online_sales = $stmt->fetch()['online_sales'];
-$stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) as credit_sales FROM bills WHERE DATE(created_at) = CURDATE() AND status = 'closed' AND payment_type = 'credit'");
-
-$stmt->execute();
-$bills_today = $stmt->fetchAll();
-foreach ($bills_today as $bill) {
-    if ($bill['payment_type'] === 'split') {
-        // Get split payments for this bill
-        $splits = $pdo->prepare("SELECT payment_type, amount FROM bill_payments WHERE bill_id = ?");
-        $splits->execute([$bill['id']]);
-        foreach ($splits->fetchAll() as $split) {
-            if ($split['payment_type'] === 'offline') $offline_sales += floatval($split['amount']);
-            elseif ($split['payment_type'] === 'online') $online_sales += floatval($split['amount']);
-            elseif ($split['payment_type'] === 'credit') $credit_sales += floatval($split['amount']);
-        }
-    } else {
-        if ($bill['payment_type'] === 'offline') $offline_sales += floatval($bill['total_amount']);
-        elseif ($bill['payment_type'] === 'online') $online_sales += floatval($bill['total_amount']);
-        elseif ($bill['payment_type'] === 'credit') $credit_sales += floatval($bill['total_amount']);
-    }
+$sales_by_type = $stmt->fetchAll();
+foreach ($sales_by_type as $row) {
+    if ($row['payment_type'] === 'offline') $offline_sales = floatval($row['total']);
+    elseif ($row['payment_type'] === 'online') $online_sales = floatval($row['total']);
+    elseif ($row['payment_type'] === 'credit') $credit_sales = floatval($row['total']);
 }
 ?>
 <!DOCTYPE html>
@@ -153,7 +197,7 @@ foreach ($bills_today as $bill) {
                     <div style="font-size:1.1rem;">Offline: <strong><?php echo number_format($offline_sales,2); ?></strong></div>
                     <div style="font-size:1.1rem;">Online: <strong><?php echo number_format($online_sales,2); ?></strong></div>
                     <div style="font-size:1.1rem;">Credit: <strong><?php echo number_format($credit_sales,2); ?></strong></div>
-                    <div style="font-size:1.2rem; margin-top:8px;">Total: <strong><?php echo number_format($daily_sales,2); ?></strong></div>
+                    <div style="font-size:1.2rem; margin-top:8px;">Total: <strong><?php echo number_format($offline_sales + $online_sales + $credit_sales,2); ?></strong></div>
                 </div>
             </div>
         </div>

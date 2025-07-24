@@ -5,21 +5,44 @@ if (!isset($_SESSION['user_id'])) {
     header('Location: /possystem/index.php');
     exit;
 }
-// Handle admin creation
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_admin'])) {
-    $username = trim($_POST['username']);
-    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-    // Check if username exists
-    $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ?");
-    $stmt->execute([$username]);
-    if ($stmt->fetch()) {
-        $error = "Username already exists!";
-    } else {
-        $stmt = $pdo->prepare("INSERT INTO users (username, password, role) VALUES (?, ?, 'admin')");
-        $stmt->execute([$username, $password]);
-        $success = "Admin user created successfully!";
+// Handle admin creation, password change, and delete
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Create admin
+    if (isset($_POST['create_admin'])) {
+        $username = trim($_POST['username']);
+        $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+        // Check if username exists
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ?");
+        $stmt->execute([$username]);
+        if ($stmt->fetch()) {
+            $error = "Username already exists!";
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO users (username, password, role) VALUES (?, ?, 'admin')");
+            $stmt->execute([$username, $password]);
+            $success = "Admin user created successfully!";
+        }
+    }
+    // Change password
+    if (isset($_POST['change_password']) && isset($_POST['admin_id'])) {
+        $admin_id = $_POST['admin_id'];
+        $new_password = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
+        $stmt = $pdo->prepare("UPDATE users SET password=? WHERE id=? AND role='admin'");
+        $stmt->execute([$new_password, $admin_id]);
+        $success = "Password updated for admin.";
+    }
+    // Delete admin
+    if (isset($_POST['delete_admin']) && isset($_POST['admin_id'])) {
+        $admin_id = $_POST['admin_id'];
+        $stmt = $pdo->prepare("DELETE FROM users WHERE id=? AND role='admin'");
+        $stmt->execute([$admin_id]);
+        $success = "Admin deleted.";
     }
 }
+
+// Fetch all admins
+$admin_stmt = $pdo->prepare("SELECT id, username FROM users WHERE role='admin' ORDER BY username");
+$admin_stmt->execute();
+$admin_list = $admin_stmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -31,49 +54,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_admin'])) {
     <link href="/possystem/public/style.css" rel="stylesheet">
 </head>
 <body>
-<nav class="navbar navbar-expand-lg mb-4">
+<nav class="navbar navbar-expand-lg navbar-dark" style="background: linear-gradient(90deg, #4f8cff 60%, #6a9cff 100%);">
   <div class="container-fluid">
     <?php
     require_once __DIR__ . '/../config.php';
     $rest = $pdo->query("SELECT name FROM restaurant_details LIMIT 1")->fetch();
     $restaurant_name = $rest ? $rest['name'] : 'Cafe POS';
     ?>
-    <a class="navbar-brand" href="/possystem/public/dashboard.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
+    <a class="navbar-brand fw-bold fs-3 text-white" href="/possystem/public/dashboard.php"><?php echo htmlspecialchars($restaurant_name); ?></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="#navbarNav" aria-expanded="false" aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
     <div class="collapse navbar-collapse" id="navbarNav">
       <ul class="navbar-nav ms-auto">
-        <li class="nav-item"><a class="nav-link" href="/possystem/public/dashboard.php">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link" href="/possystem/public/restaurant.php">Restaurant</a></li>
-        <li class="nav-item"><a class="nav-link" href="/possystem/admin/createstaff.php">Create Staff</a></li>
-        <li class="nav-item"><a class="nav-link active" href="/possystem/admin/createadmin.php">Create Admin</a></li>
-        <li class="nav-item"><a class="nav-link" href="/possystem/admin/customers.php">Customers</a></li>
-        <li class="nav-item"><a class="nav-link" href="/possystem/public/tables.php">Tables</a></li>
-        <li class="nav-item"><a class="nav-link" href="/possystem/public/logout.php">Logout</a></li>
+        <li class="nav-item"><a class="nav-link text-white" href="/possystem/public/dashboard.php">Dashboard</a></li>
+        <li class="nav-item"><a class="nav-link text-white" href="/possystem/public/restaurant.php">Restaurant</a></li>
+        <li class="nav-item"><a class="nav-link text-white" href="/possystem/admin/createstaff.php">Create Staff</a></li>
+        <li class="nav-item"><a class="nav-link text-white" href="/possystem/admin/createadmin.php">Create Admin</a></li>
+        <li class="nav-item"><a class="nav-link text-white" href="/possystem/admin/customers.php">Customers</a></li>
+        <li class="nav-item"><a class="nav-link text-white" href="/possystem/public/tables.php">Tables</a></li>
+        <li class="nav-item"><a class="nav-link text-white" href="/possystem/public/logout.php">Logout</a></li>
       </ul>
     </div>
   </div>
 </nav>
-<div class="container mt-4">
-    <h2>Create Admin User</h2>
-    <?php if (!empty($error)): ?>
-        <div class="alert alert-danger"><?php echo $error; ?></div>
-    <?php endif; ?>
-    <?php if (!empty($success)): ?>
-        <div class="alert alert-success"><?php echo $success; ?></div>
-    <?php endif; ?>
-    <form method="post" class="row g-3">
-        <div class="col-md-4">
-            <input type="text" name="username" class="form-control" placeholder="Username" required>
+
+<div class="container py-5" style="max-width: 1100px;">
+  <div class="row g-4 align-items-stretch">
+    <div class="col-lg-5">
+      <div class="card shadow-lg p-4 bg-light bg-opacity-90 h-100 d-flex flex-column justify-content-center">
+        <h2 class="mb-4 text-center" style="font-size:2rem;">Create Admin User</h2>
+        <?php if (!empty($error)): ?>
+          <div class="alert alert-danger"><?php echo $error; ?></div>
+        <?php endif; ?>
+        <?php if (!empty($success)): ?>
+          <div class="alert alert-success"><?php echo $success; ?></div>
+        <?php endif; ?>
+        <form method="post" class="row g-3">
+          <div class="col-12">
+            <input type="text" name="username" class="form-control form-control-lg" placeholder="Username" required>
+          </div>
+          <div class="col-12">
+            <input type="password" name="password" class="form-control form-control-lg" placeholder="Password" required>
+          </div>
+          <div class="col-12 d-grid">
+            <button type="submit" name="create_admin" class="btn btn-success btn-lg">Create Admin</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div class="col-lg-7">
+      <div class="card shadow-lg p-4 bg-light bg-opacity-90 h-100">
+        <h3 class="mb-4 text-center" style="font-size:1.5rem;">Admin List</h3>
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover bg-white bg-opacity-75 align-middle" style="min-width:400px;">
+            <thead class="table-light">
+              <tr>
+                <th>Username</th>
+                <th style="width: 240px;">Change Password</th>
+                <th style="width: 90px;">Delete</th>
+              </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($admin_list as $admin): ?>
+              <tr>
+                <td class="fw-semibold"><?php echo htmlspecialchars($admin['username']); ?></td>
+                <td>
+                  <form method="post" class="d-flex flex-nowrap align-items-center gap-2">
+                    <input type="hidden" name="admin_id" value="<?php echo $admin['id']; ?>">
+                    <input type="password" name="new_password" class="form-control form-control-sm" placeholder="New Password" required style="max-width:120px;">
+                    <button type="submit" name="change_password" class="btn btn-primary btn-sm">Change</button>
+                  </form>
+                </td>
+                <td>
+                  <form method="post" onsubmit="return confirm('Delete this admin user?');">
+                    <input type="hidden" name="admin_id" value="<?php echo $admin['id']; ?>">
+                    <button type="submit" name="delete_admin" class="btn btn-danger btn-sm">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+            </tbody>
+          </table>
         </div>
-        <div class="col-md-4">
-            <input type="password" name="password" class="form-control" placeholder="Password" required>
-        </div>
-        <div class="col-md-4">
-            <button type="submit" name="create_admin" class="btn btn-primary w-100">Create Admin</button>
-        </div>
-    </form>
+      </div>
+    </div>
+  </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>

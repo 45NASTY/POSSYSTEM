@@ -92,8 +92,11 @@ $customers = $stmt->fetchAll();
   </div>
   <div class="card p-5 bg-light bg-opacity-75 shadow-lg" style="font-size: 1.25rem; overflow-x:auto;">
     <h2 class="mb-4" style="font-size:2rem;">Regular Customers</h2>
+    <div class="mb-3">
+      <input type="text" id="customerSearch" class="form-control form-control-lg" placeholder="Search customers by name, phone, or email...">
+    </div>
     <div style="width:100%; overflow-x:auto;">
-      <table class='table table-bordered table-hover bg-white bg-opacity-75' style="font-size:1.15rem; width:100%; min-width:900px;">
+      <table id="customersTable" class='table table-bordered table-hover bg-white bg-opacity-75' style="font-size:1.15rem; width:100%; min-width:900px;">
           <thead>
               <tr>
                   <th>Name</th>
@@ -103,51 +106,161 @@ $customers = $stmt->fetchAll();
                   <th>Pending Credit</th>
                   <th>Update Credit Limit</th>
                   <th>Update Pending Credit</th>
+                  <th>Edit Phone</th>
                   <th>Print Credit Bill</th>
               </tr>
           </thead>
-          <tbody>
+          <tbody id="customersTableBody">
           <?php foreach ($customers as $cust): ?>
               <tr>
                   <td><?php echo htmlspecialchars($cust['name']); ?></td>
-                  <td><?php echo htmlspecialchars($cust['phone']); ?></td>
-                  <td><?php echo htmlspecialchars($cust['email']); ?></td>
-                  <td><?php echo number_format($cust['credit_limit'],2); ?></td>
-                  <td><?php echo number_format($cust['pending_credit'],2); ?></td>
-                  <td>
-                      <form method='post' class='d-flex flex-wrap'>
-                          <input type='hidden' name='customer_id' value='<?php echo $cust['id']; ?>'>
-                          <input type='number' step='0.01' name='credit_limit' value='<?php echo $cust['credit_limit']; ?>' class='form-control form-control-lg me-2 mb-2' required>
-                          <button type='submit' name='update_credit_limit' class='btn btn-primary btn-lg'>Update</button>
-                      </form>
-                  </td>
-                  <td>
-                      <form method='post' class='d-flex flex-wrap'>
-                          <input type='hidden' name='customer_id' value='<?php echo $cust['id']; ?>'>
-                          <input type='number' step='0.01' name='pending_credit' value='<?php echo $cust['pending_credit']; ?>' class='form-control form-control-lg me-2 mb-2' required>
-                          <button type='submit' name='update_pending_credit' class='btn btn-info btn-lg'>Update</button>
-                      </form>
-                  </td>
-                  <td>
-                      <?php
-                      // Find latest credit bill for this customer
-                      $creditBillStmt = $pdo->prepare("SELECT id FROM bills WHERE customer_id = ? AND payment_type = 'credit' ORDER BY closed_at DESC LIMIT 1");
-                      $creditBillStmt->execute([$cust['id']]);
-                      $creditBillId = $creditBillStmt->fetchColumn();
-                      if ($creditBillId) {
-                          echo '<a href="/possystem/public/printbill.php?bill_id=' . $creditBillId . '&autoprint=1" class="btn btn-secondary btn-lg" target="_blank">Print Bill</a>';
-                      } else {
-                          echo '<button class="btn btn-secondary btn-lg" disabled>No Bill</button>';
-                      }
-                      ?>
-                  </td>
+                 <td><?php echo htmlspecialchars($cust['phone']); ?></td>
+                 <td><?php echo htmlspecialchars($cust['email']); ?></td>
+                 <td><?php echo number_format($cust['credit_limit'],2); ?></td>
+                 <td><?php echo number_format($cust['pending_credit'],2); ?></td>
+                 <td>
+                     <form method='post' class='d-flex flex-wrap'>
+                         <input type='hidden' name='customer_id' value='<?php echo $cust['id']; ?>'>
+                         <input type='number' step='0.01' name='credit_limit' value='<?php echo $cust['credit_limit']; ?>' class='form-control form-control-lg me-2 mb-2' required>
+                         <button type='submit' name='update_credit_limit' class='btn btn-primary btn-lg'>Update</button>
+                     </form>
+                 </td>
+                 <td>
+                     <form method='post' class='d-flex flex-wrap'>
+                         <input type='hidden' name='customer_id' value='<?php echo $cust['id']; ?>'>
+                         <input type='number' step='0.01' name='pending_credit' value='<?php echo $cust['pending_credit']; ?>' class='form-control form-control-lg me-2 mb-2' required>
+                         <button type='submit' name='update_pending_credit' class='btn btn-info btn-lg'>Update</button>
+                     </form>
+                 </td>
+                 <td>
+                     <button type="button" class="btn btn-warning btn-lg" data-bs-toggle="modal" data-bs-target="#editPhoneModal<?php echo $cust['id']; ?>">Update</button>
+                     <!-- Modal -->
+                     <div class="modal fade" id="editPhoneModal<?php echo $cust['id']; ?>" tabindex="-1" aria-labelledby="editPhoneModalLabel<?php echo $cust['id']; ?>" aria-hidden="true">
+                       <div class="modal-dialog">
+                         <div class="modal-content">
+                           <form method="post">
+                             <div class="modal-header">
+                               <h5 class="modal-title" id="editPhoneModalLabel<?php echo $cust['id']; ?>">Edit Phone Number</h5>
+                               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                             </div>
+                             <div class="modal-body">
+                               <input type="hidden" name="customer_id" value="<?php echo $cust['id']; ?>">
+                               <div class="mb-3">
+                                 <label class="form-label">Current Number</label>
+                                 <input type="text" class="form-control" value="<?php echo htmlspecialchars($cust['phone']); ?>" readonly>
+                               </div>
+                               <div class="mb-3">
+                                 <label class="form-label">New Number</label>
+                                 <input type="text" name="phone" class="form-control" required pattern="[0-9+\- ]{5,20}" title="Enter a valid phone number">
+                               </div>
+                             </div>
+                             <div class="modal-footer">
+                               <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                               <button type="submit" name="update_phone" class="btn btn-primary">Change Phone Number</button>
+                             </div>
+                           </form>
+                         </div>
+                       </div>
+                     </div>
+                 </td>
+                 <td>
+                     <?php
+                     // Find latest credit bill for this customer
+                     $creditBillStmt = $pdo->prepare("SELECT id FROM bills WHERE customer_id = ? AND payment_type = 'credit' ORDER BY closed_at DESC LIMIT 1");
+                     $creditBillStmt->execute([$cust['id']]);
+                     $creditBillId = $creditBillStmt->fetchColumn();
+                     if ($creditBillId) {
+                         echo '<a href="/possystem/public/printbill.php?bill_id=' . $creditBillId . '&autoprint=1" class="btn btn-secondary btn-lg" target="_blank">Print Bill</a>';
+                     } else {
+                         echo '<button class="btn btn-secondary btn-lg" disabled>No Bill</button>';
+                     }
+                     ?>
+                 </td>
               </tr>
           <?php endforeach; ?>
           </tbody>
       </table>
+      <nav>
+        <ul class="pagination justify-content-center" id="pagination"></ul>
+      </nav>
     </div>
   </div>
 </div>
 <script src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'></script>
+<script>
+// Client-side search and pagination for customers table
+const searchInput = document.getElementById('customerSearch');
+const table = document.getElementById('customersTable');
+const tbody = document.getElementById('customersTableBody');
+const rows = Array.from(tbody.getElementsByTagName('tr'));
+const rowsPerPage = 5;
+let filteredRows = rows;
+let currentPage = 1;
+
+function renderTablePage(page) {
+  tbody.innerHTML = '';
+  const start = (page - 1) * rowsPerPage;
+  const end = start + rowsPerPage;
+  filteredRows.slice(start, end).forEach(row => tbody.appendChild(row));
+  renderPagination(page);
+    }
+    // Update phone number
+    if (isset($_POST['update_phone'])) {
+        $id = $_POST['customer_id'];
+        $phone = trim($_POST['phone']);
+        $stmt = $pdo->prepare("UPDATE customers SET phone=? WHERE id=?");
+        $stmt->execute([$phone, $id]);
+        header('Location: customers.php');
+        exit;
+    }
+
+function renderPagination(page) {
+  const pagination = document.getElementById('pagination');
+  pagination.innerHTML = '';
+  const totalPages = Math.ceil(filteredRows.length / rowsPerPage) || 1;
+  for (let i = 1; i <= totalPages; i++) {
+    const li = document.createElement('li');
+    li.className = 'page-item' + (i === page ? ' active' : '');
+    const a = document.createElement('a');
+    a.className = 'page-link';
+    a.href = '#';
+    a.textContent = i;
+    a.onclick = function(e) {
+      e.preventDefault();
+      currentPage = i;
+      renderTablePage(currentPage);
+    };
+    li.appendChild(a);
+    pagination.appendChild(li);
+    // Update phone number
+    if (isset($_POST['update_phone'])) {
+        $id = $_POST['customer_id'];
+        $phone = trim($_POST['phone']);
+        $stmt = $pdo->prepare("UPDATE customers SET phone=? WHERE id=?");
+        $stmt->execute([$phone, $id]);
+        header('Location: customers.php');
+        exit;
+    }
+}
+
+function filterRows() {
+  const query = searchInput.value.toLowerCase();
+  filteredRows = rows.filter(row => {
+    const cells = row.getElementsByTagName('td');
+    return (
+      cells[0].textContent.toLowerCase().includes(query) ||
+      cells[1].textContent.toLowerCase().includes(query) ||
+      cells[2].textContent.toLowerCase().includes(query)
+    );
+  });
+  currentPage = 1;
+  renderTablePage(currentPage);
+}
+
+searchInput.addEventListener('input', filterRows);
+
+// Initial render
+filterRows();
+</script>
 </body>
 </html>

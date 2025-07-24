@@ -90,10 +90,15 @@ $tables = $pdo->query("SELECT * FROM tables ORDER BY id")->fetchAll();
                     <form method="post" class="d-inline-flex align-items-center" style="gap:4px;">
                         <input type="hidden" name="table_id" value="<?php echo $table['id']; ?>">
                         <input type="text" name="table_number" value="<?php echo htmlspecialchars($table['table_number']); ?>" class="form-control form-control-sm" style="width:120px; display:inline-block;" required>
+                    </form>
+                </td>
+                <td>
+                    <form method="post" class="d-inline">
+                        <input type="hidden" name="table_id" value="<?php echo $table['id']; ?>">
+                        <input type="hidden" name="table_number" value="<?php echo htmlspecialchars($table['table_number']); ?>">
                         <button type="submit" name="edit_table" class="btn btn-sm btn-warning">Edit</button>
                     </form>
                 </td>
-                <td></td>
             </tr>
         <?php endforeach; ?>
         </tbody>

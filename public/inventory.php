@@ -1,4 +1,7 @@
+
 <?php
+// Set timezone to ensure correct date handling
+date_default_timezone_set('Asia/Kathmandu');
 require_once __DIR__ . '/../config.php';
 
 // Authentication check
@@ -57,11 +60,11 @@ $total = $pdo->query("SELECT IFNULL(SUM(total_price),0) as total FROM inventory_
             <input type="number" step="0.01" name="total_price" class="form-control form-control-lg" placeholder="Total Price" min="0" required>
         </div>
         <div class="col-md-2">
-            <input type="date" name="purchased_at" class="form-control form-control-lg" required value="<?php echo date('Y-m-d'); ?>">
+            <input type="date" name="purchased_at" id="purchased_at" class="form-control form-control-lg" required>
         </div>
         <div class="col-md-2">
             <select name="payment_type" class="form-select form-select-lg" required>
-                <option value="cash">Cash</option>
+                <option value="offline">Cash</option>
                 <option value="online">Online</option>
             </select>
         </div>
@@ -114,5 +117,19 @@ $total = $pdo->query("SELECT IFNULL(SUM(total_price),0) as total FROM inventory_
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Set today's date as default in the date input
+document.addEventListener('DOMContentLoaded', function() {
+    var today = new Date();
+    var yyyy = today.getFullYear();
+    var mm = String(today.getMonth() + 1).padStart(2, '0');
+    var dd = String(today.getDate()).padStart(2, '0');
+    var formatted = yyyy + '-' + mm + '-' + dd;
+    var dateInput = document.getElementById('purchased_at');
+    if (dateInput && !dateInput.value) {
+        dateInput.value = formatted;
+    }
+});
+</script>
 </body>
 </html>
