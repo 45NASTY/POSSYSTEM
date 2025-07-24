@@ -7,19 +7,41 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Handle add table
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_table'])) {
-    $table_number = trim($_POST['table_number']);
-    if ($table_number !== '') {
-        $stmt = $pdo->prepare("INSERT INTO tables (table_number) VALUES (?)");
-        $stmt->execute([$table_number]);
+// Handle add, edit, and delete table
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Add table
+    if (isset($_POST['add_table'])) {
+        $table_number = trim($_POST['table_number']);
+        if ($table_number !== '') {
+            $stmt = $pdo->prepare("INSERT INTO tables (table_number) VALUES (?)");
+            $stmt->execute([$table_number]);
+        }
+        header('Location: tables.php');
+        exit;
     }
-    header('Location: tables.php');
-    exit;
+    // Edit table name
+    if (isset($_POST['edit_table']) && isset($_POST['table_id'])) {
+        $table_id = $_POST['table_id'];
+        $table_number = trim($_POST['table_number']);
+        if ($table_number !== '') {
+            $stmt = $pdo->prepare("UPDATE tables SET table_number=? WHERE id=?");
+            $stmt->execute([$table_number, $table_id]);
+        }
+        header('Location: tables.php');
+        exit;
+    }
+    // Delete table
+    if (isset($_POST['delete_table']) && isset($_POST['table_id'])) {
+        $table_id = $_POST['table_id'];
+        $stmt = $pdo->prepare("DELETE FROM tables WHERE id=?");
+        $stmt->execute([$table_id]);
+        header('Location: tables.php');
+        exit;
+    }
 }
 
 // Fetch all tables
-$tables = $pdo->query("SELECT * FROM tables ORDER BY table_number")->fetchAll();
+$tables = $pdo->query("SELECT * FROM tables ORDER BY id")->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang='en'>
@@ -59,10 +81,20 @@ $tables = $pdo->query("SELECT * FROM tables ORDER BY table_number")->fetchAll();
         </div>
     </form>
     <table class='table table-bordered table-hover bg-white bg-opacity-75' style="font-size:1.15rem;">
-        <thead><tr><th style="width:80px;">#</th><th>Table Number</th></tr></thead>
+        <thead><tr><th style="width:80px;">#</th><th>Table Number</th><th style="width:180px;">Actions</th></tr></thead>
         <tbody>
         <?php foreach ($tables as $table): ?>
-            <tr><td><?php echo $table['id']; ?></td><td><?php echo htmlspecialchars($table['table_number']); ?></td></tr>
+            <tr>
+                <td><?php echo $table['id']; ?></td>
+                <td>
+                    <form method="post" class="d-inline-flex align-items-center" style="gap:4px;">
+                        <input type="hidden" name="table_id" value="<?php echo $table['id']; ?>">
+                        <input type="text" name="table_number" value="<?php echo htmlspecialchars($table['table_number']); ?>" class="form-control form-control-sm" style="width:120px; display:inline-block;" required>
+                        <button type="submit" name="edit_table" class="btn btn-sm btn-warning">Edit</button>
+                    </form>
+                </td>
+                <td></td>
+            </tr>
         <?php endforeach; ?>
         </tbody>
     </table>

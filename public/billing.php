@@ -66,10 +66,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $bill_id = $_POST['bill_id'];
         $payment_type = $_POST['payment_type'];
         $customer_id = isset($_POST['customer_id']) ? $_POST['customer_id'] : null;
+        // Always recalculate and update bill total before closing
+        $stmt = $pdo->prepare("SELECT SUM(quantity*price) as total FROM bill_items WHERE bill_id=?");
+        $stmt->execute([$bill_id]);
+        $total = $stmt->fetch()['total'] ?? 0;
+        $pdo->prepare("UPDATE bills SET total_amount=? WHERE id=?")->execute([$total, $bill_id]);
         if ($payment_type === 'credit' && $customer_id) {
-            $stmt = $pdo->prepare("SELECT total_amount FROM bills WHERE id=?");
-            $stmt->execute([$bill_id]);
-            $bill_total = $stmt->fetchColumn();
+            // Use the recalculated total
+            $bill_total = $total;
             // Update pending_credit for customer
             $stmt = $pdo->prepare("UPDATE customers SET pending_credit = pending_credit + ? WHERE id=?");
             $stmt->execute([$bill_total, $customer_id]);
@@ -80,9 +84,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) FROM bills WHERE customer_id=? AND status='closed' AND payment_type='credit'");
             $stmt->execute([$customer_id]);
             $used = $stmt->fetchColumn();
-            $stmt = $pdo->prepare("SELECT total_amount FROM bills WHERE id=?");
-            $stmt->execute([$bill_id]);
-            $bill_total = $stmt->fetchColumn();
             if ($used + $bill_total > $limit) {
                 $error = "Credit limit exceeded!"; // Only show warning
             }
