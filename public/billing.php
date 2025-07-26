@@ -1,4 +1,10 @@
 <?php
+// DEBUG: Show POST data for troubleshooting
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    echo '<pre style="background: #fff; color: #000; z-index: 99999; position: absolute; top: 0; left: 0; width: 100vw;">';
+    print_r($_POST);
+    echo '</pre>';
+}
 require_once __DIR__ . '/../config.php';
 
 // Check if user is logged in
@@ -36,10 +42,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: billing.php');
         exit;
     }
+if (isset($_POST['add_item']) || isset($_POST['add_item_customer'])) {
+    // For table billing, use table_id; for customer billing, use bill_id
     if (isset($_POST['add_item'])) {
         $table_id = $_POST['table_id'];
-        $menu_item_id = $_POST['menu_item_id'];
-        $quantity = max(1, (int)$_POST['quantity']);
         // Find or create open bill for this table
         $stmt = $pdo->prepare("SELECT id FROM bills WHERE table_id=? AND status='open'");
         $stmt->execute([$table_id]);
@@ -50,18 +56,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $bill_id = $bill['id'];
         }
-        // Get item price
-        $stmt = $pdo->prepare("SELECT price FROM menu_items WHERE id=?");
-        $stmt->execute([$menu_item_id]);
-        $price = $stmt->fetch()['price'];
-        // Add item to bill
-        $pdo->prepare("INSERT INTO bill_items (bill_id, menu_item_id, quantity, price) VALUES (?, ?, ?, ?)")->execute([$bill_id, $menu_item_id, $quantity, $price]);
-        // Update bill total
-        $stmt = $pdo->prepare("SELECT SUM(quantity*price) as total FROM bill_items WHERE bill_id=?");
-        $stmt->execute([$bill_id]);
-        $total = $stmt->fetch()['total'];
-        $pdo->prepare("UPDATE bills SET total_amount=? WHERE id=?")->execute([$total, $bill_id]);
+    } else {
+        // Customer billing: bill_id is provided
+        $bill_id = $_POST['bill_id'];
     }
+    $menu_item_id = $_POST['menu_item_id'];
+    $quantity = max(1, (int)$_POST['quantity']);
+    // Get item price
+    $stmt = $pdo->prepare("SELECT price FROM menu_items WHERE id=?");
+    $stmt->execute([$menu_item_id]);
+    $price = $stmt->fetch()['price'];
+    // Add item to bill
+    $pdo->prepare("INSERT INTO bill_items (bill_id, menu_item_id, quantity, price) VALUES (?, ?, ?, ?)")->execute([$bill_id, $menu_item_id, $quantity, $price]);
+    // Update bill total
+    $stmt = $pdo->prepare("SELECT SUM(quantity*price) as total FROM bill_items WHERE bill_id=?");
+    $stmt->execute([$bill_id]);
+    $total = $stmt->fetch()['total'];
+    $pdo->prepare("UPDATE bills SET total_amount=? WHERE id=?")->execute([$total, $bill_id]);
+}
     if (isset($_POST['checkout'])) {
         $bill_id = $_POST['bill_id'];
         $payment_type = $_POST['payment_type'];
@@ -191,6 +203,17 @@ foreach ($booked_tables as $table) {
 <!DOCTYPE html>
 <html lang='en'>
 <head>
+<script>
+// Make PHP customers array available to JS for split payment
+var customers = <?php echo json_encode(array_map(function($c) {
+    return [
+        'id' => $c['id'],
+        'name' => $c['name'],
+        'phone' => $c['phone'],
+        'credit_limit' => isset($c['credit_limit']) ? $c['credit_limit'] : 0
+    ];
+}, $customers)); ?>;
+</script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <meta charset='UTF-8'>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
@@ -216,6 +239,7 @@ foreach ($booked_tables as $table) {
         </div>
       </div>
     </nav>
+
 <div class='container mt-4'>
     <h2>Billing for Booked Tables</h2>
     <div class='row'>
@@ -224,340 +248,342 @@ foreach ($booked_tables as $table) {
                 <div class='card h-100'>
                     <div class='card-header bg-dark text-white'>Table <?php echo htmlspecialchars($table['table_number']); ?></div>
                     <div class='card-body d-flex flex-column justify-content-center align-items-center'>
-                        <button class='btn btn-primary' data-bs-toggle='modal' data-bs-target='#billingModal' data-table-id='<?php echo $table['id']; ?>' data-table-number='<?php echo htmlspecialchars($table['table_number']); ?>'>Bill / Add Items</button>
+                        <button class='btn btn-primary' data-bs-toggle='modal' data-bs-target='#tableBillingModal<?php echo $table['id']; ?>'>Bill / Add Items</button>
                     </div>
                 </div>
             </div>
-        <?php endforeach; ?>
-    </div>
-</div>
 
-<!-- Billing Modal -->
-<div class='modal fade' id='billingModal' tabindex='-1' aria-labelledby='billingModalLabel' aria-hidden='true'>
-  <div class='modal-dialog modal-lg modal-dialog-centered'>
-    <div class='modal-content'>
-      <div class='modal-header'>
-        <h5 class='modal-title' id='billingModalLabel'>Table Billing</h5>
-        <button type='button' class='btn-close' data-bs-dismiss='modal' aria-label='Close'></button>
-      </div>
-      <div class='modal-body' id='billing-modal-body'>
-        <!-- Content loaded by JS -->
-      </div>
-    </div>
-  </div>
-</div>
-<script>
-
-const menuItems = <?php echo json_encode($menu_items); ?>;
-const customers = <?php echo json_encode($customers); ?>;
-const bills = <?php echo json_encode($bills); ?>;
-const bookedTables = <?php echo json_encode($booked_tables); ?>;
-// Get available tables for switch
-const availableTables = <?php echo json_encode($pdo->query("SELECT * FROM tables WHERE status='available' ORDER BY table_number")->fetchAll()); ?>;
-// Pass used credit for each customer
-const customerCredits = {};
-<?php foreach ($customers as $c): ?>
-customerCredits[<?php echo $c['id']; ?>] = <?php
-    $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_amount),0) FROM bills WHERE customer_id=? AND status='closed' AND payment_type='credit'");
-    $stmt->execute([$c['id']]);
-    echo json_encode($stmt->fetchColumn());
-?>;
-<?php endforeach; ?>
-
-function renderBillingModal(tableId, tableNumber) {
-    let bill = bills[tableId] || null;
-    let html = `<h5>Table: ${tableNumber}</h5>`;
-    if (!bill) {
-        html += `<div class='alert alert-info'>No bill started yet. Add an item to start a bill.</div>`;
-    }
-    html += `<form method='post' class='mb-3'><input type='hidden' name='table_id' value='${tableId}'>`;
-    html += `<div class='row g-2'><div class='col'><select name='menu_item_id' class='form-select' required><option value=''>Select Item</option>`;
-    menuItems.forEach(item => {
-        html += `<option value='${item.id}'>${item.name} (${parseFloat(item.price).toFixed(2)})</option>`;
-    });
-    html += `</select></div><div class='col'><input type='number' name='quantity' class='form-control' placeholder='Qty' min='1' value='1' required></div><div class='col'><button type='submit' name='add_item' class='btn btn-success'>Add</button></div></div></form>`;
-    if (bill) {
-        html += `<h6>Bill Items:</h6><ul class='list-group mb-2'>`;
-        // Bill items will be loaded via PHP for now (can be improved with AJAX)
-        <?php foreach ($booked_tables as $table): ?>
-        if (tableId == <?php echo $table['id']; ?> && bills[tableId]) {
-            <?php
-            if ($bills[$table['id']]) {
-                $stmt = $pdo->prepare("SELECT bi.*, mi.name FROM bill_items bi JOIN menu_items mi ON bi.menu_item_id = mi.id WHERE bi.bill_id=?");
-                $stmt->execute([$bills[$table['id']]['id']]);
-                $bill_items = $stmt->fetchAll();
-                foreach ($bill_items as $bi) {
-                    echo "html += `<li class='list-group-item d-flex justify-content-between align-items-center'>{$bi['name']} x {$bi['quantity']}<span>NPR ".number_format($bi['price']*$bi['quantity'],2)."</span> <form method='post' style='display:inline;'><input type='hidden' name='bill_item_id' value='{$bi['id']}'><input type='hidden' name='bill_id' value='{$bi['bill_id']}'><button type='submit' name='remove_bill_item' class='btn btn-sm btn-outline-danger ms-2'>Remove</button></form></li>`;\n";
-                }
-            }
-            ?>
-        }
-        <?php endforeach; ?>
-        html += `</ul><strong>Total: NPR ${parseFloat(bill.total_amount||0).toFixed(2)}</strong>`;
-
-        // Remove Bill button
-        html += `<form method='post' class='mt-2 d-inline'><input type='hidden' name='bill_id' value='${bill.id}'><button type='submit' name='remove_bill' class='btn btn-outline-danger btn-sm me-2'><i class='bi bi-x-circle'></i> Remove Bill & Unbook Table</button></form>`;
-        // Transfer Table Button (improved)
-        html += `<button type='button' class='btn btn-warning btn-sm fw-bold ms-1' style='color:#333;box-shadow:0 2px 8px #0001;' data-bs-toggle='modal' data-bs-target='#transferTableModal${bill.id}'><i class='bi bi-arrow-left-right'></i> Transfer Table</button>`;
-        // Transfer Table Modal (improved)
-        html += `
-        <div class='modal fade' id='transferTableModal${bill.id}' tabindex='-1' aria-labelledby='transferTableModalLabel${bill.id}' aria-hidden='true'>
-          <div class='modal-dialog'>
-            <div class='modal-content rounded-4 shadow-lg border-0'>
-              <form method='post' autocomplete='off'>
-                <div class='modal-header bg-gradient bg-primary bg-opacity-25 rounded-top-4 border-0'>
-                  <h5 class='modal-title fw-bold d-flex align-items-center gap-2' id='transferTableModalLabel${bill.id}'><span class='text-warning'><i class='bi bi-arrow-left-right'></i></span> Transfer Table</h5>
-                  <button type='button' class='btn-close' data-bs-dismiss='modal' aria-label='Close'></button>
-                </div>
-                <div class='modal-body pb-0'>
-                  <input type='hidden' name='bill_id' value='${bill.id}'>
-                  <div class='mb-4'>
-                    <label for='new_table_id${bill.id}' class='form-label fw-semibold'>Select New Table</label>
-                    <select class='form-select form-select-lg border-2 border-warning' name='new_table_id' id='new_table_id${bill.id}' required style='font-size:1.1rem;'>
-                      <option value='' disabled selected>🪑 Choose a table...</option>
-                      ${availableTables.filter(t => String(t.id) !== String(tableId)).map(t => `<option value='${t.id}'>🪑 Table ${t.table_number} (${t.status.charAt(0).toUpperCase() + t.status.slice(1)})</option>`).join('')}
-                    </select>
+            <!-- Modal for Table Billing -->
+            <div class='modal fade' id='tableBillingModal<?php echo $table['id']; ?>' tabindex='-1' aria-labelledby='tableBillingModalLabel<?php echo $table['id']; ?>' aria-hidden='true'>
+              <div class='modal-dialog modal-lg modal-dialog-centered'>
+                <div class='modal-content'>
+                  <div class='modal-header'>
+                    <h5 class='modal-title' id='tableBillingModalLabel<?php echo $table['id']; ?>'>Table Billing: <?php echo htmlspecialchars($table['table_number']); ?></h5>
+                    <button type='button' class='btn-close' data-bs-dismiss='modal' aria-label='Close'></button>
                   </div>
-                  <div class='alert alert-info small rounded-3 border-0 mb-0' style='background:#f8fafc;'>
-                    <i class='bi bi-info-circle-fill text-primary'></i> Transferring will move this bill and all items to the selected table.<br>The current table will be freed for new customers.
+                  <div class='modal-body'>
+                    <form method='post' class='mb-3'>
+                        <input type='hidden' name='table_id' value='<?php echo $table['id']; ?>'>
+                        <input type='hidden' name='add_item' value='1'>
+                        <div class='row g-2 align-items-center'>
+                            <div class='col'>
+                                <input type="text" class="form-control mb-1 menu-search-input" placeholder="Search item...">
+                                <select name='menu_item_id' class='form-select menu-select-table' data-table-id='<?php echo $table['id']; ?>' required>
+                                    <option value=''>Select Item</option>
+                                    <?php foreach ($menu_items as $item): ?>
+                                        <option value='<?php echo $item['id']; ?>'><?php echo htmlspecialchars($item['name']); ?> (<?php echo number_format($item['price'],2); ?>)</option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class='col'>
+                                <input type='number' name='quantity' class='form-control' placeholder='Qty' min='1' value='1' required>
+                            </div>
+                            <div class='col'>
+                                <button type='submit' class='btn btn-success'>Add</button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <h6>Bill Items:</h6>
+                    <ul class='list-group mb-2'>
+                        <?php
+                        $stmt = $pdo->prepare("SELECT bi.*, mi.name FROM bill_items bi JOIN menu_items mi ON bi.menu_item_id = mi.id WHERE bi.bill_id=(SELECT id FROM bills WHERE table_id=? AND status='open')");
+                        $stmt->execute([$table['id']]);
+                        $bill_items = $stmt->fetchAll();
+                        foreach ($bill_items as $bi): ?>
+                            <li class='list-group-item d-flex justify-content-between align-items-center'><?php echo htmlspecialchars($bi['name']); ?> x <?php echo $bi['quantity']; ?><span>NPR <?php echo number_format($bi['price']*$bi['quantity'],2); ?></span>
+                                <form method='post' style='display:inline;'>
+                                    <input type='hidden' name='bill_item_id' value='<?php echo $bi['id']; ?>'>
+                                    <input type='hidden' name='bill_id' value='<?php echo $bi['bill_id']; ?>'>
+                                    <button type='submit' name='remove_bill_item' class='btn btn-sm btn-outline-danger ms-2'>Remove</button>
+                                </form>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php
+                    $stmt = $pdo->prepare("SELECT total_amount FROM bills WHERE table_id=? AND status='open'");
+                    $stmt->execute([$table['id']]);
+                    $total = $stmt->fetchColumn() ?: 0;
+                    ?>
+                    <strong>Total: NPR <?php echo number_format($total, 2); ?></strong>
+                    <!-- Remove Bill button -->
+                    <?php
+                    $stmt = $pdo->prepare("SELECT id FROM bills WHERE table_id=? AND status='open'");
+                    $stmt->execute([$table['id']]);
+                    $bill_id = $stmt->fetchColumn();
+                    if ($bill_id): ?>
+                    <form method='post' class='mt-2 d-inline'>
+                        <input type='hidden' name='bill_id' value='<?php echo $bill_id; ?>'>
+                        <button type='submit' name='remove_bill' class='btn btn-outline-danger btn-sm me-2'><i class='bi bi-x-circle'></i> Remove Bill</button>
+                    </form>
+                    <!-- Checkout Form for Table Bill -->
+                    <form method='post' class='mt-3' id='direct-payment-form-table-<?php echo $bill_id; ?>'>
+                        <input type='hidden' name='bill_id' value='<?php echo $bill_id; ?>'>
+                        <div class='mb-2'><label class='form-label'>Direct Payment:</label></div>
+                        <div class='row g-2 mb-2'>
+                            <div class='col'>
+                                <select name='payment_type' class='form-select' required>
+                                    <option value='cash'>Cash</option>
+                                    <option value='card'>Card</option>
+                                    <option value='credit'>Credit</option>
+                                </select>
+                            </div>
+                            <div class='col customer-select-col' style='display:none;'>
+                                <select name='customer_id' class='form-select'>
+                                    <option value=''>Select Customer</option>
+                                    <?php foreach ($customers as $cust): ?>
+                                        <option value='<?php echo $cust['id']; ?>'><?php echo htmlspecialchars($cust['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class='col'>
+                                <button type='submit' name='checkout' class='btn btn-primary'>Checkout</button>
+                            </div>
+                        </div>
+                    </form>
+                    <!-- Split Payment Section for Table Bill -->
+                    <form method='post' class='mt-3' id='split-payment-form-table-<?php echo $bill_id; ?>'>
+                        <input type='hidden' name='bill_id' value='<?php echo $bill_id; ?>'>
+                        <div class='mb-2'><label class='form-label'>Split Payment:</label></div>
+                        <div id='split-payments-container-table-<?php echo $bill_id; ?>'></div>
+                        <button type='button' class='btn btn-outline-secondary btn-sm add-split-btn-table' data-bill-id='<?php echo $bill_id; ?>'>Add Split</button>
+                        <button type='submit' name='split_checkout' class='btn btn-success btn-sm ms-2'>Split Checkout</button>
+                    </form>
+                    <?php endif; ?>
                   </div>
                 </div>
-                <div class='modal-footer d-flex justify-content-between border-0 pt-0 pb-4'>
-                  <button type='button' class='btn btn-outline-secondary px-4 rounded-pill' data-bs-dismiss='modal'><i class='bi bi-x-lg'></i> Cancel</button>
-                  <button type='submit' name='switch_table' class='btn btn-success px-4 rounded-pill fw-bold' id='transferBtn${bill.id}' disabled><i class='bi bi-arrow-repeat'></i> Transfer</button>
-                </div>
-              </form>
+              </div>
             </div>
-          </div>
-        </div>`;
-        // Enable Transfer button only if a table is selected
-        setTimeout(() => {
-          const sel = document.getElementById('new_table_id'+bill.id);
-          const btn = document.getElementById('transferBtn'+bill.id);
-          if (sel && btn) {
-            sel.addEventListener('change', function() {
-              btn.disabled = !sel.value;
-            });
-          }
-        }, 300);
+        <?php endforeach; ?>
+    </div>
 
-        // Direct Payment Section
-        html += `<form method='post' class='mt-3' id='direct-payment-form'><input type='hidden' name='bill_id' value='${bill.id}'>`;
-        html += `<div class='mb-2'><label class='form-label'>Direct Payment:</label></div>`;
-        html += `<div class='row g-2 mb-2'>`;
-        html += `<div class='col-4'><select name='payment_type' class='form-select' id='direct-payment-type' required>
-            <option value='online'>Online</option>
-            <option value='offline'>Offline</option>
-            <option value='credit'>Credit</option>
-        </select></div>`;
-        html += `<div class='col-5' id='direct-customer-select' style='display:none;'>
-            <select name='customer_id' class='form-select' id='direct-customer-id'>
-                <option value=''>Select Customer</option>
-                ${customers.map(c => `<option value='${c.id}'>${c.name} (${c.phone})</option>`).join('')}
-            </select>
-        </div>`;
-        html += `<div class='col-3'><button type='submit' name='checkout' class='btn btn-success'>Checkout (Direct)</button></div>`;
-        html += `</div>`;
-        html += `<div id='direct-credit-warning'></div>`;
-        html += `</form>`;
-
-        // Split Payment Section
-        html += `<form method='post' class='mt-3' id='split-payment-form'><input type='hidden' name='bill_id' value='${bill.id}'>`;
-        html += `<div class='mb-2'><label class='form-label'>Split Payment:</label></div>`;
-        html += `<div id='split-payments-container'></div>`;
-        html += `<button type='button' class='btn btn-secondary btn-sm mb-2' id='add-split-btn'>Add Split</button>`;
-        html += `<div id='split-error' class='text-danger mb-2'></div>`;
-        html += `<button type='submit' name='split_checkout' class='btn btn-danger'>Checkout (Split)</button></form>`;
-
-    }
-    document.getElementById('billing-modal-body').innerHTML = html;
-    // Split payment UI logic
-    setTimeout(() => {
-        // Direct payment customer select logic
-        const directType = document.getElementById('direct-payment-type');
-        const directCustCol = document.getElementById('direct-customer-select');
-        const directCustId = document.getElementById('direct-customer-id');
-        const directCreditWarning = document.getElementById('direct-credit-warning');
-        if (directType) {
-            function updateDirectCustomer() {
-                if (directType.value === 'credit') {
-                    directCustCol.style.display = '';
-                } else {
-                    directCustCol.style.display = 'none';
-                    directCreditWarning.innerHTML = '';
-                }
-            }
-            function updateDirectCreditWarning() {
-                if (directType.value === 'credit' && directCustId.value) {
-                    let customer = customers.find(c => c.id == directCustId.value);
-                    let usedCredit = parseFloat(customerCredits[directCustId.value] || 0);
-                    let creditLimit = parseFloat(customer.credit_limit);
-                    let billTotal = parseFloat(bill.total_amount||0);
-                    if ((usedCredit + billTotal) > creditLimit) {
-                        directCreditWarning.innerHTML = `<div class='alert alert-warning mt-2'>Warning: This bill will exceed the customer's credit limit!</div>`;
-                    } else {
-                        directCreditWarning.innerHTML = '';
-                    }
-                } else {
-                    directCreditWarning.innerHTML = '';
-                }
-            }
-            directType.addEventListener('change', function() {
-                updateDirectCustomer();
-                updateDirectCreditWarning();
-            });
-            if (directCustId) {
-                directCustId.addEventListener('change', function() {
-                    updateDirectCreditWarning();
-                });
-            }
-            updateDirectCustomer();
-        }
-
-        // Split payment logic (unchanged)
-        const splitPaymentsContainer = document.getElementById('split-payments-container');
-        const addSplitBtn = document.getElementById('add-split-btn');
-        let splitIndex = 0;
-        function createSplitRow(idx) {
-            return `<div class='row g-2 mb-2 split-row' data-idx='${idx}'>
-                <div class='col-4'><input type='number' step='0.01' min='0' name='split_amount[${idx}]' class='form-control split-amount' placeholder='Amount' required></div>
-                <div class='col-4'><select name='split_type[${idx}]' class='form-select split-type' required>
-                    <option value='online'>Online</option>
-                    <option value='offline'>Offline</option>
-                    <option value='credit'>Credit</option>
-                </select></div>
-                <div class='col-3 split-customer-col' style='display:none;'>
-                    <select name='split_customer[${idx}]' class='form-select split-customer'>
-                        <option value=''>Select Customer</option>
-                        ${customers.map(c => `<option value='${c.id}'>${c.name} (${c.phone})</option>`).join('')}
-                    </select>
+    <?php
+    // Fetch open bills for booked customers (no table assigned)
+    $booked_customers_bills = $pdo->query("SELECT b.*, c.name as customer_name, c.phone FROM bills b JOIN customers c ON b.customer_id = c.id WHERE b.status = 'open' AND b.table_id IS NULL")->fetchAll();
+    ?>
+    <?php if (count($booked_customers_bills) > 0): ?>
+    <h2 class='mt-5'>Billing for Booked Customers</h2>
+    <div class='row'>
+        <?php foreach ($booked_customers_bills as $bill): ?>
+            <div class='col-md-3 mb-4'>
+                <div class='card h-100'>
+                    <div class='card-header bg-info text-dark'>Customer: <?php echo htmlspecialchars($bill['customer_name']); ?></div>
+                    <div class='card-body d-flex flex-column justify-content-center align-items-center'>
+                        <div class='mb-2'><?php echo htmlspecialchars($bill['phone']); ?></div>
+                        <button class='btn btn-primary' data-bs-toggle='modal' data-bs-target='#customerBillingModal<?php echo $bill['id']; ?>'>Bill / Add Items</button>
+                    </div>
                 </div>
-                <div class='col-1'><button type='button' class='btn btn-outline-danger btn-sm remove-split-btn'>&times;</button></div>
-                <div class='col-12 split-credit-warning'></div>
-            </div>`;
-        }
-        function updateCustomerSelects() {
-            splitPaymentsContainer.querySelectorAll('.split-row').forEach(row => {
-                const typeSel = row.querySelector('.split-type');
-                const custCol = row.querySelector('.split-customer-col');
-                if (typeSel.value === 'credit') {
-                    custCol.style.display = '';
-                } else {
-                    custCol.style.display = 'none';
-                    row.querySelector('.split-credit-warning').innerHTML = '';
-                }
-            });
-        }
-        function updateCreditWarnings() {
-            splitPaymentsContainer.querySelectorAll('.split-row').forEach(row => {
-                const typeSel = row.querySelector('.split-type');
-                if (typeSel.value === 'credit') {
-                    let warningDiv = row.querySelector('.split-credit-warning');
-                    const custSel = row.querySelector('.split-customer');
-                    const amt = parseFloat(row.querySelector('.split-amount').value || 0);
-                    const customerId = custSel.value;
-                    if (customerId) {
-                        let customer = customers.find(c => c.id == customerId);
-                        let usedCredit = parseFloat(customerCredits[customerId] || 0);
-                        let creditLimit = parseFloat(customer.credit_limit);
-                        if ((usedCredit + amt) > creditLimit) {
-                            warningDiv.innerHTML = `<div class='alert alert-warning mt-2'>Warning: ${customer.name} will exceed credit limit!</div>`;
-                        } else {
-                            warningDiv.innerHTML = '';
-                        }
-                    } else {
-                        warningDiv.innerHTML = '';
-                    }
-                }
-            });
-        }
-        function validateSplitTotal() {
-            let total = 0;
-            splitPaymentsContainer.querySelectorAll('.split-row').forEach(row => {
-                total += parseFloat(row.querySelector('.split-amount').value || 0);
-            });
-            let errorDiv = document.getElementById('split-error');
-            if (Math.abs(total - parseFloat(bill.total_amount||0)) > 0.01) {
-                errorDiv.textContent = `Split total (NPR ${total.toFixed(2)}) must match bill total (NPR ${parseFloat(bill.total_amount||0).toFixed(2)})`;
+            </div>
+
+            <!-- Modal for Booked Customer Billing -->
+            <div class='modal fade' id='customerBillingModal<?php echo $bill['id']; ?>' tabindex='-1' aria-labelledby='customerBillingModalLabel<?php echo $bill['id']; ?>' aria-hidden='true'>
+              <div class='modal-dialog modal-lg modal-dialog-centered'>
+                <div class='modal-content'>
+                  <div class='modal-header'>
+                    <h5 class='modal-title' id='customerBillingModalLabel<?php echo $bill['id']; ?>'>Customer Billing: <?php echo htmlspecialchars($bill['customer_name']); ?></h5>
+                    <button type='button' class='btn-close' data-bs-dismiss='modal' aria-label='Close'></button>
+                  </div>
+                  <div class='modal-body'>
+                    <form method='post' class='mb-3'>
+                        <input type='hidden' name='bill_id' value='<?php echo $bill['id']; ?>'>
+                        <div class='row g-2 align-items-center'>
+                            <div class='col'>
+                                <input type="text" class="form-control mb-1 menu-search-input" placeholder="Search item...">
+                                <select name='menu_item_id' class='form-select menu-select-customer' data-bill-id='<?php echo $bill['id']; ?>' required>
+                                    <option value=''>Select Item</option>
+                                    <?php foreach ($menu_items as $item): ?>
+                                        <option value='<?php echo $item['id']; ?>'><?php echo htmlspecialchars($item['name']); ?> (<?php echo number_format($item['price'],2); ?>)</option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class='col'>
+                                <input type='number' name='quantity' class='form-control' placeholder='Qty' min='1' value='1' required>
+                            </div>
+                            <div class='col'>
+                                <button type='submit' name='add_item_customer' class='btn btn-success'>Add</button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <h6>Bill Items:</h6>
+                    <ul class='list-group mb-2'>
+                        <?php
+                        $stmt = $pdo->prepare("SELECT bi.*, mi.name FROM bill_items bi JOIN menu_items mi ON bi.menu_item_id = mi.id WHERE bi.bill_id=?");
+                        $stmt->execute([$bill['id']]);
+                        $bill_items = $stmt->fetchAll();
+                        foreach ($bill_items as $bi): ?>
+                            <li class='list-group-item d-flex justify-content-between align-items-center'><?php echo htmlspecialchars($bi['name']); ?> x <?php echo $bi['quantity']; ?><span>NPR <?php echo number_format($bi['price']*$bi['quantity'],2); ?></span>
+                                <form method='post' style='display:inline;'>
+                                    <input type='hidden' name='bill_item_id' value='<?php echo $bi['id']; ?>'>
+                                    <input type='hidden' name='bill_id' value='<?php echo $bi['bill_id']; ?>'>
+                                    <button type='submit' name='remove_bill_item' class='btn btn-sm btn-outline-danger ms-2'>Remove</button>
+                                </form>
+// --- Split Payment for Customer and Table Billing Modals ---
+                        <?php endforeach; ?>
+                    </ul>
+                    <strong>Total: NPR <?php echo number_format($bill['total_amount'] ?? 0, 2); ?></strong>
+                    <!-- Remove Bill button -->
+                    <form method='post' class='mt-2 d-inline'>
+                        <input type='hidden' name='bill_id' value='<?php echo $bill['id']; ?>'>
+                        <button type='submit' name='remove_bill' class='btn btn-outline-danger btn-sm me-2'><i class='bi bi-x-circle'></i> Remove Bill</button>
+                    </form>
+                    <!-- Direct Payment for customer bill -->
+                    <form method='post' class='mt-3' id='direct-payment-form-customer-<?php echo $bill['id']; ?>'>
+                        <input type='hidden' name='bill_id' value='<?php echo $bill['id']; ?>'>
+                        <div class='mb-2'><label class='form-label'>Direct Payment:</label></div>
+                        <div class='row g-2 mb-2'>
+                            <div class='col-4'><select name='payment_type' class='form-select direct-payment-type' required>
+                                <option value='online'>Online</option>
+                                <option value='offline'>Offline</option>
+                                <option value='credit'>Credit</option>
+                            </select></div>
+                            <div class='col-5 direct-customer-select' style='display:none;'>
+                                <input type='hidden' name='customer_id' value='<?php echo $bill['customer_id']; ?>'>
+                                <span class='form-control-plaintext'><?php echo htmlspecialchars($bill['customer_name']); ?></span>
+                            </div>
+                            <div class='col-3'><button type='submit' name='checkout' class='btn btn-success'>Checkout (Direct)</button></div>
+                        </div>
+                        <div class='direct-credit-warning'></div>
+                    </form>
+                    <!-- Split Payment Section -->
+                    <form method='post' class='mt-3' id='split-payment-form-customer-<?php echo $bill['id']; ?>'><input type='hidden' name='bill_id' value='<?php echo $bill['id']; ?>'>
+                        <div class='mb-2'><label class='form-label'>Split Payment:</label></div>
+                        <div id='split-payments-container-customer-<?php echo $bill['id']; ?>'></div>
+                        <button type='button' class='btn btn-secondary btn-sm mb-2 add-split-btn-customer' data-bill-id='<?php echo $bill['id']; ?>'>Add Split</button>
+                        <div class='split-error-customer text-danger mb-2'></div>
+                        <button type='submit' name='split_checkout' class='btn btn-danger'>Checkout (Split)</button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+
+
+
+
+
+
+
+
+<script>
+// --- Menu Item Search Filter for Dropdowns ---
+document.addEventListener('input', function(e) {
+    if (e.target.classList.contains('menu-search-input')) {
+        const input = e.target;
+        const select = input.parentElement.querySelector('select');
+        const filter = input.value.toLowerCase();
+        Array.from(select.options).forEach(option => {
+            if (option.value === '') {
+                option.style.display = '';
+            } else {
+                option.style.display = option.text.toLowerCase().includes(filter) ? '' : 'none';
+            }
+        });
+    }
+});
+
+// --- Split Payment for Customer and Table Billing Modals ---
+document.addEventListener('DOMContentLoaded', function() {
+    function createSplitRow(idx, billType) {
+        // billType: 'customer' or 'table'
+        return `<div class='row g-2 mb-2 split-row' data-idx='${idx}'>
+            <div class='col-4'><input type='number' step='0.01' min='0' name='split_amount[${idx}]' class='form-control split-amount' placeholder='Amount' required></div>
+            <div class='col-4'><select name='split_type[${idx}]' class='form-select split-type' required>
+                <option value='cash'>Cash</option>
+                <option value='card'>Card</option>
+                <option value='credit'>Credit</option>
+            </select></div>
+            <div class='col-3 split-customer-col' style='display:none;'>
+                <select name='split_customer[${idx}]' class='form-select split-customer'>
+                    <option value=''>Select Customer</option>
+                    ${customers.map(c => `<option value='${c.id}'>${c.name} (${c.phone})</option>`).join('')}
+                </select>
+            </div>
+            <div class='col-1'><button type='button' class='btn btn-outline-danger btn-sm remove-split-btn'>&times;</button></div>
+            <div class='col-12 split-credit-warning'></div>
+        </div>`;
+    }
+
+    // Add Split for both types
+    document.querySelectorAll('.add-split-btn-customer').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const billId = btn.getAttribute('data-bill-id');
+            const container = document.getElementById('split-payments-container-customer-' + billId);
+            let idx = container.childElementCount;
+            container.insertAdjacentHTML('beforeend', createSplitRow(idx, 'customer'));
+            updateCustomerSelects(container);
+        });
+    });
+    document.querySelectorAll('.add-split-btn-table').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const billId = btn.getAttribute('data-bill-id');
+            const container = document.getElementById('split-payments-container-table-' + billId);
+            let idx = container.childElementCount;
+            container.insertAdjacentHTML('beforeend', createSplitRow(idx, 'table'));
+            updateCustomerSelects(container);
+        });
+    });
+
+    function updateCustomerSelects(container) {
+        container.querySelectorAll('.split-row').forEach(row => {
+            const typeSel = row.querySelector('.split-type');
+            const custCol = row.querySelector('.split-customer-col');
+            if (typeSel.value === 'credit') {
+                custCol.style.display = '';
+            } else {
+                custCol.style.display = 'none';
+                row.querySelector('.split-credit-warning').innerHTML = '';
+            }
+        });
+    }
+
+    // Event listeners for both types
+    document.querySelectorAll('[id^="split-payments-container-"]').forEach(function(container) {
+        container.addEventListener('change', function(e) {
+            if (e.target.classList.contains('split-type')) {
+                updateCustomerSelects(container);
+            }
+            validateSplitTotal(container);
+        });
+        container.addEventListener('input', function(e) {
+            if (e.target.classList.contains('split-amount')) {
+                validateSplitTotal(container);
+            }
+        });
+        container.addEventListener('click', function(e) {
+            if (e.target.classList.contains('remove-split-btn')) {
+                e.target.closest('.split-row').remove();
+                updateCustomerSelects(container);
+                validateSplitTotal(container);
+            }
+        });
+    });
+
+    function validateSplitTotal(container) {
+        let total = 0;
+        container.querySelectorAll('.split-row').forEach(row => {
+            total += parseFloat(row.querySelector('.split-amount').value || 0);
+        });
+        // Find the closest error div
+        let errorDiv = container.parentElement.querySelector('.split-error-customer, .split-error-table');
+        // Find the total from the modal
+        let totalText = container.closest('.modal-body').querySelector('strong').textContent;
+        let billTotal = parseFloat(totalText.replace(/[^\d.]/g, '')) || 0;
+        if (errorDiv) {
+            if (Math.abs(total - billTotal) > 0.01) {
+                errorDiv.textContent = `Split total (NPR ${total.toFixed(2)}) must match bill total (NPR ${billTotal.toFixed(2)})`;
                 return false;
             } else {
                 errorDiv.textContent = '';
                 return true;
             }
         }
-        function addSplitRow() {
-            splitPaymentsContainer.insertAdjacentHTML('beforeend', createSplitRow(splitIndex));
-            splitIndex++;
-            updateCustomerSelects();
-        }
-        if (addSplitBtn) {
-            addSplitBtn.addEventListener('click', function() {
-                addSplitRow();
-            });
-        }
-        if (splitPaymentsContainer) {
-            splitPaymentsContainer.addEventListener('change', function(e) {
-                if (e.target.classList.contains('split-type')) {
-                    updateCustomerSelects();
-                    updateCreditWarnings();
-                }
-                if (e.target.classList.contains('split-customer') || e.target.classList.contains('split-amount')) {
-                    updateCreditWarnings();
-                }
-                validateSplitTotal();
-            });
-            splitPaymentsContainer.addEventListener('input', function(e) {
-                if (e.target.classList.contains('split-amount')) {
-                    updateCreditWarnings();
-                    validateSplitTotal();
-                }
-            });
-            splitPaymentsContainer.addEventListener('click', function(e) {
-                if (e.target.classList.contains('remove-split-btn')) {
-                    e.target.closest('.split-row').remove();
-                    updateCustomerSelects();
-                    updateCreditWarnings();
-                    validateSplitTotal();
-                }
-            });
-            // Add two split rows by default
-            addSplitRow();
-            addSplitRow();
-        }
-    }, 100);
-}
-
-function toggleCustomerSelect(val, billTotal) {
-    let customerSelect = document.getElementById('customer-select');
-    let customerId = document.getElementById('customer-id');
-    customerSelect.style.display = (val === 'credit') ? '' : 'none';
-    if (val === 'credit' && customerId) {
-        showCreditWarning(customerId.value, billTotal);
-    } else {
-        document.getElementById('credit-warning').innerHTML = '';
     }
-}
-
-function showCreditWarning(customerId, billTotal) {
-    let customer = customers.find(c => c.id == customerId);
-    if (!customer) return;
-    let usedCredit = parseFloat(customerCredits[customerId] || 0);
-    let creditLimit = parseFloat(customer.credit_limit);
-    billTotal = parseFloat(billTotal || 0);
-    if ((usedCredit + billTotal) > creditLimit) {
-        document.getElementById('credit-warning').innerHTML = `<div class='alert alert-warning mt-2'>Warning: This bill will exceed the customer's credit limit!</div>`;
-    } else {
-        document.getElementById('credit-warning').innerHTML = '';
-    }
-}
-
-var billingModal = document.getElementById('billingModal');
-billingModal.addEventListener('show.bs.modal', function (event) {
-    var button = event.relatedTarget;
-    var tableId = button.getAttribute('data-table-id');
-    var tableNumber = button.getAttribute('data-table-number');
-    renderBillingModal(tableId, tableNumber);
 });
+</script>
 </script>
 <script src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'></script>
 </body>

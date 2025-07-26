@@ -75,6 +75,10 @@ if (!isset($_SESSION['user_id'])) {
         <li class='list-group-item'><a href='/possystem/public/tables.php'>Manage Tables</a></li>
         <li class='list-group-item'><a href='/possystem/public/restaurant.php'>Restaurant Details</a></li>
         <li class='list-group-item'><a href='/possystem/admin/attendance.php'>Attendance</a></li>
+        <li class='list-group-item'><a href='/possystem/admin/staffsalaries.php'>Staff Salaries</a></li>
+        <li class='list-group-item'><a href='/possystem/admin/bills.php'>Rent & Bills</a></li>
+        <li class='list-group-item'><a href='/possystem/admin/sahakari.php'>Sahakari</a></li>
+        <li class='list-group-item'><a href='/possystem/admin/bills.php'>Rent & Bills</a></li>
     </ul>
 </div>
 <script src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'></script>

@@ -118,3 +118,9 @@ CREATE TABLE bill_payments (
     FOREIGN KEY (bill_id) REFERENCES bills(id),
     FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
+
+
+
+
+
+ALTER TABLE bills MODIFY table_id INT NULL;

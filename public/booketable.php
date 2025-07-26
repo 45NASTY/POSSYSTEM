@@ -21,6 +21,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_table'])) {
 
 $tables = $pdo->query("SELECT * FROM tables ORDER BY table_number")->fetchAll();
 ?>
+<?php
+// Fetch customers for booking (only those not already booked)
+$customers = $pdo->query("SELECT * FROM customers WHERE id NOT IN (SELECT customer_id FROM bills WHERE status = 'open' AND customer_id IS NOT NULL)")->fetchAll();
+
+// Handle customer booking
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['book_customer'])) {
+    $customer_id = $_POST['customer_id'];
+    // Create an open bill for the customer (no table assigned, use NULL for table_id)
+    $stmt = $pdo->prepare("INSERT INTO bills (customer_id, table_id, status, created_at) VALUES (?, NULL, 'open', NOW())");
+    $stmt->execute([$customer_id]);
+    header('Location: booketable.php');
+    exit;
+}
+
+// Fetch currently booked customers (open bills with customer, no table)
+$booked_customers = $pdo->query("SELECT c.* FROM customers c JOIN bills b ON c.id = b.customer_id WHERE b.status = 'open' AND (b.table_id IS NULL OR b.table_id = '')")->fetchAll();
+?>
 <!DOCTYPE html>
 <html lang='en'>
 <head>
@@ -64,11 +81,36 @@ $tables = $pdo->query("SELECT * FROM tables ORDER BY table_number")->fetchAll();
                 </div>
             </div>
         </form>
+
+        <h2>Book a Customer</h2>
+        <form method='post' class='mb-4'>
+            <div class='row g-2'>
+                <div class='col'>
+                    <select name='customer_id' class='form-select' required>
+                        <option value=''>Select Customer</option>
+                        <?php foreach ($customers as $customer): ?>
+                            <option value='<?php echo $customer['id']; ?>'><?php echo htmlspecialchars($customer['name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class='col'>
+                    <button type='submit' name='book_customer' class='btn btn-success'>Book Customer</button>
+                </div>
+            </div>
+        </form>
         <h4>Currently Booked Tables</h4>
         <ul class='list-group'>
             <?php foreach ($tables as $table): if ($table['status'] === 'occupied'): ?>
                 <li class='list-group-item'>Table <?php echo htmlspecialchars($table['table_number']); ?></li>
             <?php endif; endforeach; ?>
+        </ul>
+        <h4 class='mt-4'>Currently Booked Customers</h4>
+        <ul class='list-group'>
+            <?php if (count($booked_customers) === 0): ?>
+                <li class='list-group-item text-muted'>No customers currently booked.</li>
+            <?php else: foreach ($booked_customers as $customer): ?>
+                <li class='list-group-item'><?php echo htmlspecialchars($customer['name']); ?></li>
+            <?php endforeach; endif; ?>
         </ul>
     </div>
     <script src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'></script>

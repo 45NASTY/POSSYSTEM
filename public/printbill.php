@@ -87,53 +87,62 @@ $bills = $stmt->fetchAll();
             // Calculate VAT and subtotal
             $vat = round($bill['total_amount'] * 0.13, 2);
             $subtotal = round($bill['total_amount'] - $vat, 2);
-            echo '<div id="bill-print-area">';
-            echo '<!DOCTYPE html><html><head><title>Bill</title></head><body>';
-            echo '<h2>'.htmlspecialchars($rest['name'] ?? 'Restaurant Name').'</h2>';
-            echo '<p>'.htmlspecialchars($rest['address'] ?? 'Address').'</p>';
-            echo '<p>Phone: '.htmlspecialchars($rest['phone'] ?? '').'</p>';
-            echo '<p>Date: '.date('Y-m-d', strtotime($bill['closed_at'])).'</p>';
-            echo '<p>Time: '.date('H:i:s', strtotime($bill['closed_at'])).'</p>';
-            echo '<p>Bill No.: '.$bill['id'].'</p>';
-            echo '<p>PAN/VAT: '.htmlspecialchars($rest['pan_vat'] ?? '').'</p>';
-            echo '<hr>';
-            echo '<table border="1" width="100%" cellspacing="0" cellpadding="5">';
-            echo '<tr><th>Qty</th><th>Item</th><th>Rate (Rs.)</th><th>Total (Rs.)</th></tr>';
+            echo '<div id="bill-print-area" class="receipt-preview">';
+            echo '<div class="center">';
+            echo '<strong>'.htmlspecialchars($rest['name'] ?? 'Restaurant Name').'</strong><br>';
+            echo (isset($rest['address']) ? htmlspecialchars($rest['address']).'<br>' : '');
+            echo 'Phone: '.htmlspecialchars($rest['phone'] ?? '').'<br>';
+            echo 'PAN No: '.htmlspecialchars($rest['pan_vat'] ?? '').'<br>';
+            echo '</div>';
+            echo '<div class="line"></div>';
+            echo 'Date: '.date('Y-m-d', strtotime($bill['closed_at'])).' &nbsp; Time: '.date('H:i:s', strtotime($bill['closed_at'])).'<br>';
+            echo 'Bill No.: '.$bill['id'].'<br>';
+            echo 'Table: '.htmlspecialchars($bill['table_number']).'<br>';
+            if (!empty($bill['customer_name'])) echo 'Customer: '.htmlspecialchars($bill['customer_name']).'<br>';
+            echo '<div class="line"></div>';
+            echo '<table cellspacing="0" cellpadding="0">';
+            echo '<tr><td>Qty</td><td>Item</td><td style="text-align:right;">Rate</td><td style="text-align:right;">Total</td></tr>';
             foreach ($items as $item) {
-                echo '<tr><td>'.$item['quantity'].'</td><td>'.htmlspecialchars($item['name']).'</td><td>'.number_format($item['price'],2).'</td><td>'.number_format($item['price']*$item['quantity'],2).'</td></tr>';
+                echo '<tr>';
+                echo '<td>'.(int)$item['quantity'].'</td>';
+                echo '<td>'.htmlspecialchars($item['name']).'</td>';
+                echo '<td style="text-align:right;">'.number_format($item['price'],2).'</td>';
+                echo '<td style="text-align:right;">'.number_format($item['price']*$item['quantity'],2).'</td>';
+                echo '</tr>';
             }
             echo '</table>';
-            echo '<p>Subtotal: Rs. '.number_format($subtotal,2).'</p>';
-            echo '<p>VAT (13%): Rs. '.number_format($vat,2).'</p>';
-            echo '<p>Grand Total: Rs. '.number_format($bill['total_amount'],2).'</p>';
-            // Payment breakdown
+            echo '<div class="line"></div>';
+            echo '<table class="totals">';
+            echo '<tr><td>Subtotal</td><td style="text-align:right;">'.number_format($subtotal,2).'</td></tr>';
+            echo '<tr><td>VAT (13%)</td><td style="text-align:right;">'.number_format($vat,2).'</td></tr>';
+            echo '<tr><td><strong>Grand Total</strong></td><td style="text-align:right;"><strong>'.number_format($bill['total_amount'],2).'</strong></td></tr>';
+            echo '</table>';
             if ($bill['payment_type'] === 'split') {
-                // Show split payment breakdown
                 $split_stmt = $pdo->prepare("SELECT bp.*, c.name as customer_name FROM bill_payments bp LEFT JOIN customers c ON bp.customer_id = c.id WHERE bp.bill_id = ?");
                 $split_stmt->execute([$bill_id]);
                 $splits = $split_stmt->fetchAll();
-                echo '<p><strong>Split Payment Breakdown:</strong></p>';
-                echo '<table border="1" width="100%" cellspacing="0" cellpadding="5">';
-                echo '<tr><th>Type</th><th>Amount (Rs.)</th><th>Customer</th></tr>';
+                echo '<div class="line"></div>';
+                echo '<div><strong>Split Payment:</strong></div>';
+                echo '<table>';
                 foreach ($splits as $sp) {
                     echo '<tr>';
                     echo '<td>'.ucfirst($sp['payment_type']).'</td>';
-                    echo '<td>'.number_format($sp['amount'],2).'</td>';
-                    echo '<td>'.($sp['payment_type']==='credit' ? htmlspecialchars($sp['customer_name']) : '-').'</td>';
+                    echo '<td style="text-align:right;">'.number_format($sp['amount'],2).'</td>';
+                    echo '<td>'.($sp['payment_type']==='credit' ? htmlspecialchars($sp['customer_name']) : '').'</td>';
                     echo '</tr>';
                 }
                 echo '</table>';
-                $paid_total = array_sum(array_column($splits, 'amount'));
-                echo '<p>Total Paid: Rs. '.number_format($paid_total,2).'</p>';
             } else {
-                echo '<p>Paid ('.ucfirst($bill['payment_type']).'): Rs. '.number_format($bill['total_amount'],2).'</p>';
+                echo '<div class="line"></div>';
+                echo 'Paid ('.ucfirst($bill['payment_type']).'): '.number_format($bill['total_amount'],2).'<br>';
             }
-            echo '<hr>';
-            echo '<p>Thank you! Please visit again.</p>';
-            echo '</body></html>';
+            echo '<div class="line"></div>';
+            echo '<div class="center">Thank you! Please visit again.</div>';
             echo '</div>';
             echo '<button class="btn btn-success mt-3" onclick="printBill()">Print Bill</button>';
-            echo '<script>function printBill(){var printContents = document.getElementById(\'bill-print-area\').innerHTML;var win = window.open(\'\',\'_blank\');win.document.write(printContents);win.document.close();win.print();}</script>';
+            // Print styles for receipt
+            echo '<style>\n.receipt-preview { max-width: 400px; margin: 0 auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 16px; font-family: monospace; font-size: 14px; } .receipt-preview .center { text-align: center; } .receipt-preview .line { border-top: 2.5px dashed #111; margin: 12px 0; } .receipt-preview table { width: 100%; } .receipt-preview td { vertical-align: top; } .receipt-preview .totals td { padding-top: 5px; } @media print { body * { visibility: hidden !important; } #bill-print-area, #bill-print-area * { visibility: visible !important; } #bill-print-area { position: absolute; left: 0; top: 0; width: 58mm !important; min-width: 0 !important; max-width: none !important; font-size: 12px !important; box-shadow: none !important; border-radius: 0 !important; background: #fff !important; padding: 10px !important; } .receipt-preview .line { border-top: 2.5px dashed #111 !important; margin: 12px 0 !important; } } </style>';
+            echo "<script>function printBill(){var printContents = document.getElementById('bill-print-area').innerHTML;var win = window.open('', '_blank');win.document.write('<html><head><title>Receipt</title></head><body style=\"margin:0;padding:0;\">'+printContents+'</body></html>');win.document.close();win.print();}</script>";
         }
     }
     ?>

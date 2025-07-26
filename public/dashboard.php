@@ -223,6 +223,238 @@ foreach ($sales_by_type as $row) {
                 <div class="card-body"><h4 class="card-title"><?php echo $count_today; ?></h4></div>
             </div>
         </div>
+        <!-- Staff Salaries Summary Card -->
+        <div class="col-md-3">
+            <div class="card dashboard-card" style="background:#0ea5e9;color:#fff;">
+                <div class="card-header">Staff Salaries (This Month)</div>
+                <div class="card-body">
+                    <?php
+                    // Try to use BS columns, fallback to created_at if present, else show 0
+                    $total_salary = 0;
+                    $has_bs = false;
+                    $has_created = false;
+                    try {
+                        $pdo->query("SELECT bs_month, bs_year FROM staff_salaries LIMIT 1");
+                        $has_bs = true;
+                    } catch (Exception $e) { $has_bs = false; }
+                    if (!$has_bs) {
+                        try {
+                            $pdo->query("SELECT created_at FROM staff_salaries LIMIT 1");
+                            $has_created = true;
+                        } catch (Exception $e) { $has_created = false; }
+                    }
+                    if ($has_bs) {
+                        $bs_month = date('n');
+                        $bs_year = date('Y');
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total_salary FROM staff_salaries WHERE bs_month = ? AND bs_year = ?");
+                        $stmt->execute([$bs_month, $bs_year]);
+                        $total_salary = $stmt->fetch()['total_salary'];
+                    } elseif ($has_created) {
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total_salary FROM staff_salaries WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $total_salary = $stmt->fetch()['total_salary'];
+                    } else {
+                        $total_salary = 0;
+                    }
+                    ?>
+                    <div style="font-size:1.2rem;">Total: <strong><?php echo number_format($total_salary,2); ?></strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Total Staff Card -->
+        <div class="col-md-3">
+            <div class="card dashboard-card" style="background:#2563eb;color:#fff;">
+                <div class="card-header">Total Staff</div>
+                <div class="card-body">
+                    <?php
+                    try {
+                        $stmt = $pdo->query("SELECT COUNT(*) as total FROM staff");
+                        $total_staff = $stmt->fetch()['total'];
+                    } catch (Exception $e) { $total_staff = 0; }
+                    ?>
+                    <div style="font-size:2rem;"><strong><?php echo $total_staff; ?></strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Total Customers Card -->
+        <div class="col-md-3">
+            <div class="card dashboard-card" style="background:#f472b6;color:#fff;">
+                <div class="card-header">Total Customers</div>
+                <div class="card-body">
+                    <?php
+                    try {
+                        $stmt = $pdo->query("SELECT COUNT(*) as total FROM customers");
+                        $total_customers = $stmt->fetch()['total'];
+                    } catch (Exception $e) { $total_customers = 0; }
+                    ?>
+                    <div style="font-size:2rem;"><strong><?php echo $total_customers; ?></strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Total Menu Items Card -->
+        <div class="col-md-3">
+            <div class="card dashboard-card" style="background:#10b981;color:#fff;">
+                <div class="card-header">Total Menu Items</div>
+                <div class="card-body">
+                    <?php
+                    try {
+                        $stmt = $pdo->query("SELECT COUNT(*) as total FROM menu");
+                        $total_menu = $stmt->fetch()['total'];
+                    } catch (Exception $e) { $total_menu = 0; }
+                    ?>
+                    <div style="font-size:2rem;"><strong><?php echo $total_menu; ?></strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Total Expenses Card -->
+        <div class="col-md-3">
+            <div class="card dashboard-card" style="background:#ef4444;color:#fff;">
+                <div class="card-header">Total Expenses (This Month)</div>
+                <div class="card-body">
+                    <?php
+                    // Inventory Purchases (this month)
+                    $inventory_exp = 0;
+                    try {
+                        $pdo->query("SELECT created_at FROM inventory_purchases LIMIT 1");
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(total_price),0) as total FROM inventory_purchases WHERE MONTH(purchased_at) = MONTH(CURDATE()) AND YEAR(purchased_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $inventory_exp = $stmt->fetch()['total'];
+                    } catch (Exception $e) { $inventory_exp = 0; }
+
+                    // Paid Bills (this month)
+                    $bills_exp = 0;
+                    try {
+                        $pdo->query("SELECT created_at FROM rent_bills LIMIT 1");
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM rent_bills WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $bills_exp += $stmt->fetch()['total'];
+                    } catch (Exception $e) {}
+                    try {
+                        $pdo->query("SELECT created_at FROM electricity_bills LIMIT 1");
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM electricity_bills WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $bills_exp += $stmt->fetch()['total'];
+                    } catch (Exception $e) {}
+                    try {
+                        $pdo->query("SELECT created_at FROM other_bills LIMIT 1");
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM other_bills WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $bills_exp += $stmt->fetch()['total'];
+                    } catch (Exception $e) {}
+
+                    // Sahakari Withdrawals (this month)
+                    $sahakari_exp = 0;
+                    try {
+                        $pdo->query("SELECT created_at FROM sahakari_withdrawals LIMIT 1");
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM sahakari_withdrawals WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $sahakari_exp = $stmt->fetch()['total'];
+                    } catch (Exception $e) { $sahakari_exp = 0; }
+
+                    $total_expenses = $inventory_exp + $bills_exp + $sahakari_exp;
+                    ?>
+                    <div style="font-size:1.1rem;">Inventory: <strong><?php echo number_format($inventory_exp,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Bills: <strong><?php echo number_format($bills_exp,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Sahakari: <strong><?php echo number_format($sahakari_exp,2); ?></strong></div>
+                    <div style="font-size:1.2rem; margin-top:8px;">Total: <strong><?php echo number_format($total_expenses,2); ?></strong></div>
+                </div>
+            </div>
+        </div>
+        <!-- Bills (Rent/Electricity/Other) Summary Card -->
+        <div class="col-md-3">
+            <div class="card dashboard-card" style="background:#f43f5e;color:#fff;">
+                <div class="card-header">Bills (This Month)</div>
+                <div class="card-body">
+                    <?php
+                    // Try to use BS columns, fallback to created_at if present, else show 0
+                    $rent = $electricity = $other = 0;
+                    $has_bs = false;
+                    $has_created = false;
+                    try {
+                        $pdo->query("SELECT bs_month, bs_year FROM rent_bills LIMIT 1");
+                        $pdo->query("SELECT bs_month, bs_year FROM electricity_bills LIMIT 1");
+                        $pdo->query("SELECT bs_month, bs_year FROM other_bills LIMIT 1");
+                        $has_bs = true;
+                    } catch (Exception $e) { $has_bs = false; }
+                    if (!$has_bs) {
+                        try {
+                            $pdo->query("SELECT created_at FROM rent_bills LIMIT 1");
+                            $pdo->query("SELECT created_at FROM electricity_bills LIMIT 1");
+                            $pdo->query("SELECT created_at FROM other_bills LIMIT 1");
+                            $has_created = true;
+                        } catch (Exception $e) { $has_created = false; }
+                    }
+                    if ($has_bs) {
+                        $bs_month = date('n');
+                        $bs_year = date('Y');
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM rent_bills WHERE bs_month = ? AND bs_year = ?");
+                        $stmt->execute([$bs_month, $bs_year]);
+                        $rent = $stmt->fetch()['total'];
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM electricity_bills WHERE bs_month = ? AND bs_year = ?");
+                        $stmt->execute([$bs_month, $bs_year]);
+                        $electricity = $stmt->fetch()['total'];
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM other_bills WHERE bs_month = ? AND bs_year = ?");
+                        $stmt->execute([$bs_month, $bs_year]);
+                        $other = $stmt->fetch()['total'];
+                    } elseif ($has_created) {
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM rent_bills WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $rent = $stmt->fetch()['total'];
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM electricity_bills WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $electricity = $stmt->fetch()['total'];
+                        $stmt = $pdo->prepare("SELECT IFNULL(SUM(amount),0) as total FROM other_bills WHERE MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())");
+                        $stmt->execute();
+                        $other = $stmt->fetch()['total'];
+                    } else {
+                        $rent = $electricity = $other = 0;
+                    }
+                    $total_bills = $rent + $electricity + $other;
+                    ?>
+                    <div style="font-size:1.1rem;">Rent: <strong><?php echo number_format($rent,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Electricity: <strong><?php echo number_format($electricity,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Other: <strong><?php echo number_format($other,2); ?></strong></div>
+                    <div style="font-size:1.2rem; margin-top:8px;">Total: <strong><?php echo number_format($total_bills,2); ?></strong></div>
+                </div>
+            </div>
+        </div>
+        <!-- Sahakari Summary Card -->
+        <div class="col-md-3">
+            <div class="card dashboard-card" style="background:#a21caf;color:#fff;">
+                <div class="card-header">Sahakari (Net Balance)</div>
+                <div class="card-body">
+                    <?php
+                    // Sahakari net balance
+                    $stmt = $pdo->query("SELECT IFNULL(SUM(amount),0) as total_investment FROM sahakari_investments");
+                    $total_investment = $stmt->fetch()['total_investment'];
+                    $stmt = $pdo->query("SELECT IFNULL(SUM(amount),0) as total_withdrawal FROM sahakari_withdrawals");
+                    $total_withdrawal = $stmt->fetch()['total_withdrawal'];
+                    $net_balance = $total_investment - $total_withdrawal;
+                    ?>
+                    <div style="font-size:1.1rem;">Investment: <strong><?php echo number_format($total_investment,2); ?></strong></div>
+                    <div style="font-size:1.1rem;">Withdrawal: <strong><?php echo number_format($total_withdrawal,2); ?></strong></div>
+                    <div style="font-size:1.2rem; margin-top:8px;">Net: <strong><?php echo number_format($net_balance,2); ?></strong></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Quick Links Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card dashboard-card" style="background:#fff;color:#222;">
+                <div class="card-header" style="background:#f3f4f6;">Quick Links</div>
+                <div class="card-body d-flex flex-wrap justify-content-center gap-3">
+                    <a href="/possystem/admin/staffsalaries.php" class="btn btn-outline-primary">Staff Salaries</a>
+                    <a href="/possystem/admin/bills.php" class="btn btn-outline-danger">Bills</a>
+                    <a href="/possystem/admin/sahakari.php" class="btn btn-outline-dark">Sahakari</a>
+                    <a href="/possystem/admin/sahakari_report.php" class="btn btn-outline-secondary">Sahakari Report</a>
+                </div>
+            </div>
+        </div>
     </div>
     <div class="row mt-4">
         <div class="col-md-6">

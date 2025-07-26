@@ -82,7 +82,10 @@ $items = $pdo->query("SELECT mi.*, mc.name as category FROM menu_items mi JOIN m
         <div class="col-md-2"><button type="submit" name="add_item" class="btn btn-success btn-lg">Add Item</button></div>
     </form>
     <div style="width:100%; overflow-x:auto;">
-      <table class="table table-bordered table-hover bg-white bg-opacity-75" style="font-size:1.15rem; width:100%; min-width:900px;">
+    <div class="mb-3">
+      <input type="text" id="menuSearch" class="form-control form-control-lg" placeholder="Search menu items by name, category, or price...">
+    </div>
+    <table id="menuTable" class="table table-bordered table-hover bg-white bg-opacity-75" style="font-size:1.15rem; width:100%; min-width:900px;">
           <thead>
               <tr>
                   <th>Name</th>
@@ -95,15 +98,15 @@ $items = $pdo->query("SELECT mi.*, mc.name as category FROM menu_items mi JOIN m
           <?php foreach ($items as $item): ?>
               <tr>
                   <form method="post" class="d-flex flex-wrap">
-                      <td><input type="text" name="item_name" value="<?php echo htmlspecialchars($item['name']); ?>" class="form-control form-control-lg" required></td>
-                      <td>
+                      <td class="item-name"><input type="text" name="item_name" value="<?php echo htmlspecialchars($item['name']); ?>" class="form-control form-control-lg" required></td>
+                      <td class="item-category">
                           <select name="category_id" class="form-select form-select-lg" required>
                               <?php foreach ($categories as $cat): ?>
                                   <option value="<?php echo $cat['id']; ?>" <?php if ($cat['id'] == $item['category_id']) echo 'selected'; ?>><?php echo htmlspecialchars($cat['name']); ?></option>
                               <?php endforeach; ?>
                           </select>
                       </td>
-                      <td><input type="number" step="0.01" name="price" value="<?php echo $item['price']; ?>" class="form-control form-control-lg" required></td>
+                      <td class="item-price"><input type="number" step="0.01" name="price" value="<?php echo $item['price']; ?>" class="form-control form-control-lg" required></td>
                       <td>
                           <input type="hidden" name="item_id" value="<?php echo $item['id']; ?>">
                           <button type="submit" name="edit_item" class="btn btn-primary btn-lg me-2 mb-2">Save</button>
@@ -118,5 +121,26 @@ $items = $pdo->query("SELECT mi.*, mc.name as category FROM menu_items mi JOIN m
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Menu item search filter
+document.addEventListener('DOMContentLoaded', function() {
+  const searchInput = document.getElementById('menuSearch');
+  const table = document.getElementById('menuTable');
+  const rows = Array.from(table.getElementsByTagName('tr')).slice(1); // skip header
+  searchInput.addEventListener('input', function() {
+    const query = searchInput.value.toLowerCase();
+    rows.forEach(row => {
+      const name = row.querySelector('.item-name input')?.value.toLowerCase() || '';
+      const category = row.querySelector('.item-category select')?.selectedOptions[0].text.toLowerCase() || '';
+      const price = row.querySelector('.item-price input')?.value.toLowerCase() || '';
+      if (name.includes(query) || category.includes(query) || price.includes(query)) {
+        row.style.display = '';
+      } else {
+        row.style.display = 'none';
+      }
+    });
+  });
+});
+</script>
 </body>
 </html>

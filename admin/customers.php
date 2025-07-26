@@ -1,8 +1,15 @@
 <?php
 require_once __DIR__ . '/../config.php';
 
-// Check if user is logged in
+// Check if user is logged in and is admin
 if (!isset($_SESSION['user_id'])) {
+    header('Location: /possystem/index.php');
+    exit;
+}
+$stmt = $pdo->prepare("SELECT role FROM users WHERE id = ?");
+$stmt->execute([$_SESSION['user_id']]);
+$user = $stmt->fetch();
+if (!$user || $user['role'] !== 'admin') {
     header('Location: /possystem/index.php');
     exit;
 }
@@ -203,16 +210,7 @@ function renderTablePage(page) {
   const end = start + rowsPerPage;
   filteredRows.slice(start, end).forEach(row => tbody.appendChild(row));
   renderPagination(page);
-    }
-    // Update phone number
-    if (isset($_POST['update_phone'])) {
-        $id = $_POST['customer_id'];
-        $phone = trim($_POST['phone']);
-        $stmt = $pdo->prepare("UPDATE customers SET phone=? WHERE id=?");
-        $stmt->execute([$phone, $id]);
-        header('Location: customers.php');
-        exit;
-    }
+}
 
 function renderPagination(page) {
   const pagination = document.getElementById('pagination');
@@ -232,15 +230,7 @@ function renderPagination(page) {
     };
     li.appendChild(a);
     pagination.appendChild(li);
-    // Update phone number
-    if (isset($_POST['update_phone'])) {
-        $id = $_POST['customer_id'];
-        $phone = trim($_POST['phone']);
-        $stmt = $pdo->prepare("UPDATE customers SET phone=? WHERE id=?");
-        $stmt->execute([$phone, $id]);
-        header('Location: customers.php');
-        exit;
-    }
+  }
 }
 
 function filterRows() {
